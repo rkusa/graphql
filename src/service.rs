@@ -47,42 +47,30 @@ impl GraphQL {
 fn handle_graphql_request<T>(buffer: &Vec<u8>, root: T) -> BoxFuture<Response, hyper::Error>
     where T: Resolvable
 {
-    match serde_json::from_slice::<PostQuery>(&buffer) {
-        Ok(query) => {
-            match parser::parse(&query.query) {
-                Ok(ss) => {
-                    // print!("Success:\n{}", ss);
+    let result = serde_json::from_slice::<PostQuery>(&buffer)
+        .map_err(|_| ())
+        .and_then(|query| parser::parse(query.query.as_bytes()).map_err(|_| ()))
+        .map(|ss| {
+            resolve(&ss, &root).map_err(|_| ())
+                .and_then(|result| serde_json::to_string_pretty(&result).map_err(|_| ()))
+                .map(|mut buffer| {
+                    buffer += "\n";
 
-                    resolve(&ss, &root)
-                        .map(|result| {
-                            match serde_json::to_string_pretty(&result) {
-                                Ok(mut buffer) => {
-                                    buffer += "\n";
+                    Response::new()
+                        .with_header(ContentLength(buffer.len() as u64))
+                        .with_header(ContentType::json())
+                        .with_body(buffer)
 
-                                    Response::new()
-                                        .with_header(ContentLength(buffer.len() as u64))
-                                        .with_header(ContentType::json())
-                                        .with_body(buffer)
-                                }
-                                Err(_) => {
-                                    Response::new().with_status(StatusCode::BadRequest)
-                                }
-                            }
+                })
+                .or_else(|_| {
+                    future::ok(Response::new().with_status(StatusCode::BadRequest))
+                })
+                .boxed()
+        });
 
-                        })
-                        .or_else(|_| {
-                            future::ok(Response::new().with_status(StatusCode::BadRequest))
-                        })
-                        .boxed()
-                }
-                Err(_) => {
-                    future::ok(Response::new().with_status(StatusCode::BadRequest)).boxed()
-                }
-            }
-        }
-        Err(_) => {
-            future::ok(Response::new().with_status(StatusCode::BadRequest)).boxed()
-        }
+    match result {
+        Ok(f) => f,
+        Err(_) => future::ok(Response::new().with_status(StatusCode::BadRequest)).boxed(),
     }
 }
 
