@@ -11,8 +11,8 @@ futures = "0.1"
 futures-cpupool = "0.1"
 tokio-service = "0.1"
 hyper = { git = "https://github.com/hyperium/hyper.git", branch = "master" }
-munch = { git = "https://github.com/utkarshkukreti/munch.rs.git", branch = "master" }
 combine = "2.3"
+chomp = "0.3"
 
 [dev-dependencies]
 tokio-postgres = "0.2"

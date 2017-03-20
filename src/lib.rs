@@ -5,6 +5,7 @@ extern crate combine;
 extern crate futures;
 extern crate tokio_service;
 extern crate hyper;
+#[macro_use] extern crate chomp;
 
 use std::fmt;
 use std::io;
@@ -19,6 +20,7 @@ use serde_json::{Number};
 
 pub mod service;
 pub mod parser;
+pub mod parser2;
 
 pub struct GraphQL;
 
