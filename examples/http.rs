@@ -16,7 +16,7 @@ struct User {
 
 impl Resolvable for User {
     fn resolve(&self, field: &Field) -> BoxFuture<Value, ResolveError> {
-        let f = match field.name {
+        let f = match field.name.as_ref() {
             "id" => future::ok(Value::Number(self.id.into())),
             "name" => future::ok(Value::String(self.name.to_string())),
             _ => future::err(ResolveError::InvalidField(field.name.to_string())),
@@ -29,7 +29,7 @@ struct Root;
 
 impl Resolvable for Root {
     fn resolve(&self, field: &Field) -> BoxFuture<Value, ResolveError> {
-        match field.name {
+        match field.name.as_ref() {
             "user" => {
                 match field.selection_set {
                     Some(ref selection_set) => {

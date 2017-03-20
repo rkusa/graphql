@@ -1,7 +1,6 @@
 extern crate serde;
 extern crate serde_json;
 #[macro_use] extern crate serde_derive;
-extern crate combine;
 extern crate futures;
 extern crate tokio_service;
 extern crate hyper;
@@ -20,7 +19,6 @@ use serde_json::{Number};
 
 pub mod service;
 pub mod parser;
-pub mod parser2;
 
 pub struct GraphQL;
 
