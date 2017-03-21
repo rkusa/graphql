@@ -18,6 +18,10 @@ use serde_json::{Number};
 pub mod service;
 pub mod parser;
 
+pub trait Resolvable {
+    fn resolve(&self, field: &Field) -> BoxFuture<Value, ResolveError>;
+}
+
 pub struct GraphQL;
 
 impl Service for GraphQL {
@@ -36,12 +40,6 @@ impl Service for GraphQL {
         // In this case, the response is immediate.
         future::ok(req).boxed()
     }
-}
-
-pub struct Resolve;
-
-pub trait Resolvable {
-    fn resolve(&self, field: &Field) -> BoxFuture<Value, ResolveError>;
 }
 
 #[derive(Debug)]
@@ -81,37 +79,6 @@ pub enum Value {
     Object(Vec<(String, Value)>),
 }
 
-impl fmt::Display for Value {
-    /// Serializes a json value into a string
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut wr = WriterFormatter {
-            inner: f,
-        };
-        serde_json::to_writer_pretty(&mut wr, self).map_err(|_| fmt::Error)
-    }
-}
-
-struct WriterFormatter<'a, 'b: 'a> {
-    inner: &'a mut fmt::Formatter<'b>,
-}
-
-impl<'a, 'b> io::Write for WriterFormatter<'a, 'b> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        fn io_error<E>(_: E) -> io::Error {
-            // Value does not matter because fmt::Debug and fmt::Display impls
-            // below just map it to fmt::Error
-            io::Error::new(io::ErrorKind::Other, "fmt error")
-        }
-        let s = try!(str::from_utf8(buf).map_err(io_error));
-        try!(self.inner.write_str(s).map_err(io_error));
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 impl Serialize for Value {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where S: Serializer
@@ -133,8 +100,9 @@ impl Serialize for Value {
 pub fn resolve<T>(selection_set: &SelectionSet, root: &T) -> BoxFuture<Value, ResolveError>
     where T: Resolvable
 {
-    // TODO: the following could not be used, see https://github.com/alexcrichton/futures-rs/issues/285
-    // future::join_all(selection_set.fields.iter().map(|field| { ... }))
+    // NOTICE: the following could not be used:
+    //      future::join_all(selection_set.fields.iter().map(|field| { ... }))
+    // see https://github.com/alexcrichton/futures-rs/issues/285
 
     let mut fs = Vec::new();
 
