@@ -1,4 +1,4 @@
-use std::{io, clone};
+use std::{io, clone, error, fmt};
 use std::sync::{Arc, Mutex};
 
 use hyper;
@@ -8,6 +8,30 @@ use hyper::server::{Service, NewService, Request, Response};
 use futures::{future, Future, BoxFuture, Stream};
 use serde_json;
 use ::{Resolvable, resolve, Field, Value, ResolveError, parser};
+
+#[derive(Debug)]
+pub enum Error {
+    BadRequest(String),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Error::BadRequest(ref msg) => write!(f, "Bad Request: {}", msg),
+        }
+    }
+}
+
+impl error::Error for Error {
+    fn description(&self) -> &str {
+        match *self {
+            Error::BadRequest(_) => "Bad Request",
+        }
+    }
+
+    // TODO: keep track of cause? (e.g. serde error)
+    // fn cause(&self) -> Option<&Error> {}
+}
 
 #[derive(Serialize, Deserialize)]
 struct PostQuery {
@@ -44,15 +68,22 @@ impl GraphQL {
   }
 }
 
-fn handle_graphql_request<T>(buffer: &Vec<u8>, root: T) -> BoxFuture<Response, hyper::Error>
+fn handle_graphql_request<T>(buffer: &Vec<u8>, root: T) -> BoxFuture<Response, Error>
     where T: Resolvable
 {
     let result = serde_json::from_slice::<PostQuery>(&buffer)
-        .map_err(|_| ())
-        .and_then(|query| parser::parse(query.query.as_bytes()).map_err(|_| ()))
+        .map_err(|_| Error::BadRequest("invalid json body".to_string()))
+        .and_then(|query| {
+            parser::parse(query.query.as_bytes())
+                .map_err(|_| Error::BadRequest("invalid graphql query".to_string()))
+        })
         .map(|ss| {
-            resolve(&ss, &root).map_err(|_| ())
-                .and_then(|result| serde_json::to_string_pretty(&result).map_err(|_| ()))
+            resolve(&ss, &root)
+                .map_err(|_| Error::BadRequest("failed resolving query".to_string()))
+                .and_then(|result| {
+                    serde_json::to_string_pretty(&result)
+                        .map_err(|_| Error::BadRequest("failed creating query result".to_string()))
+                })
                 .map(|mut buffer| {
                     buffer += "\n";
 
@@ -62,15 +93,12 @@ fn handle_graphql_request<T>(buffer: &Vec<u8>, root: T) -> BoxFuture<Response, h
                         .with_body(buffer)
 
                 })
-                .or_else(|_| {
-                    future::ok(Response::new().with_status(StatusCode::BadRequest))
-                })
                 .boxed()
         });
 
     match result {
         Ok(f) => f,
-        Err(_) => future::ok(Response::new().with_status(StatusCode::BadRequest)).boxed(),
+        Err(e) => future::err(e).boxed(),
     }
 }
 
@@ -102,6 +130,16 @@ impl Service for GraphQL {
             })
             .and_then(|buffer| {
                 handle_graphql_request(&buffer, root)
+                    .or_else(|err| {
+                        let res = match err {
+                            Error::BadRequest(msg) => {
+                                Response::new()
+                                    .with_status(StatusCode::BadRequest)
+                                    .with_body(msg)
+                            },
+                        };
+                        future::ok(res)
+                    })
             })
             .boxed()
     }

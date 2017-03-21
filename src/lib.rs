@@ -6,9 +6,7 @@ extern crate tokio_service;
 extern crate hyper;
 #[macro_use] extern crate chomp;
 
-use std::fmt;
-use std::io;
-use std::str;
+use std::{fmt, io, str, error};
 
 use tokio_service::Service;
 use futures::{future, Future, BoxFuture};
@@ -46,6 +44,7 @@ pub trait Resolvable {
     fn resolve(&self, field: &Field) -> BoxFuture<Value, ResolveError>;
 }
 
+#[derive(Debug)]
 pub enum ResolveError {
     InvalidField(String),
     NoSubFields,
@@ -58,6 +57,15 @@ impl fmt::Display for ResolveError {
                 write!(f, "Cannot query field {}", name),
             ResolveError::NoSubFields =>
                 write!(f, "Field does not have subfields",),
+        }
+    }
+}
+
+impl error::Error for ResolveError {
+    fn description(&self) -> &str {
+        match *self {
+            ResolveError::InvalidField(_) => "Query has an invalid field",
+            ResolveError::NoSubFields => "Resolver expected subfields where no subfields were specified",
         }
     }
 }
