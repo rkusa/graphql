@@ -18,6 +18,7 @@ pub enum Value {
 
 #[derive(PartialEq, Debug)]
 pub struct Field {
+    pub alias: Option<String>,
     pub name: String,
     pub arguments: Option<Vec<(String, Value)>>,
     pub selection_set: Option<SelectionSet>,
@@ -99,8 +100,20 @@ fn arguments<I: U8Input>(i: I) -> SimpleResult<I, Option<Vec<(String, Value)>>> 
     }
 }
 
+fn alias<I: U8Input>(i: I) -> SimpleResult<I, Option<String>> {
+    parse!{i;
+        let name = name();
+        skip_whitespace();
+        token(b':');
+
+        ret Some(name)
+    }
+}
+
 fn field<I: U8Input>(i: I) -> SimpleResult<I, Field> {
     parse!{i;
+        let alias = option(alias, None);
+        skip_whitespace();
         let name = name();
         skip_whitespace();
         let arguments = option(arguments, None);
@@ -109,6 +122,7 @@ fn field<I: U8Input>(i: I) -> SimpleResult<I, Field> {
         skip_whitespace();
 
         ret Field {
+            alias: alias,
             name: name,
             arguments: arguments,
             selection_set: selection_set,

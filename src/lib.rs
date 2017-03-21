@@ -107,7 +107,10 @@ pub fn resolve<T>(selection_set: &SelectionSet, root: &T) -> BoxFuture<Value, Re
     let mut fs = Vec::new();
 
     for field in &selection_set.fields {
-        let field_name = field.name.to_string();
+        let field_name = match field.alias {
+            Some(ref alias) => alias.clone(),
+            None => field.name.clone(),
+        };
         let f = root.resolve(&field).map(move |val| {
             (field_name, val)
         });
