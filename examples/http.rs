@@ -5,7 +5,7 @@ extern crate graphql;
 extern crate futures_cpupool;
 
 use hyper::server::Http;
-use graphql::{Resolvable, ResolveError, Value, Field, resolve};
+use graphql::{Resolvable, ResolveError, Value, Field};
 use futures::{future, Future, BoxFuture};
 
 struct User {
@@ -30,16 +30,11 @@ impl Resolvable for Root {
     fn resolve(&self, field: &Field) -> BoxFuture<Value, ResolveError> {
         match field.name.as_ref() {
             "user" => {
-                match field.selection_set {
-                    Some(ref selection_set) => {
-                        let user = User {
-                            id: 42,
-                            name: "Markus".to_string(),
-                        };
-                        resolve(&selection_set, &user)
-                    }
-                    None => future::err(ResolveError::NoSubFields).boxed(),
-                }
+                let user = User {
+                    id: 42,
+                    name: "Markus".to_string(),
+                };
+                field.resolve(&user)
             }
             _ => future::err(ResolveError::InvalidField(field.name.to_string())).boxed(),
         }

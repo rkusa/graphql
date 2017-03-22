@@ -2,6 +2,8 @@ use chomp::parsers;
 use chomp::prelude::*;
 use chomp::ascii::{is_alphanumeric, is_alpha, is_digit, skip_whitespace, decimal};
 use chomp::combinators::look_ahead;
+use resolve::{Value as ResolveValue, Resolvable, ResolveError, resolve};
+use futures::{future, Future, BoxFuture};
 
 #[derive(PartialEq, Debug)]
 pub enum Value {
@@ -21,7 +23,18 @@ pub struct Field {
     pub alias: Option<String>,
     pub name: String,
     pub arguments: Option<Vec<(String, Value)>>,
-    pub selection_set: Option<SelectionSet>,
+    selection_set: Option<SelectionSet>,
+}
+
+impl Field {
+    pub fn resolve<T>(&self, obj: &T) -> BoxFuture<ResolveValue, ResolveError>
+        where T: Resolvable
+    {
+        match self.selection_set {
+            Some(ref selection_set) => resolve(&selection_set, obj),
+            None => future::err(ResolveError::NoSubFields).boxed(),
+        }
+    }
 }
 
 #[derive(PartialEq, Debug)]
