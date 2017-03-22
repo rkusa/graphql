@@ -1,3 +1,7 @@
+# graphql
+
+[![Build Status](https://travis-ci.org/rkusa/graphql.svg?branch=master)](https://travis-ci.org/rkusa/graphql)
+
 Experimental¹ [futures](https://github.com/alexcrichton/futures-rs)-based GraphQL server implementation.
 
 Example http endpoint can be started with:
