@@ -68,7 +68,7 @@ fn name<I: U8Input>(i: I) -> SimpleResult<I, String> {
 fn zero<I: U8Input>(i: I) -> SimpleResult<I, i32> {
     parse!{i;
         token(b'0');
-        look_ahead(|i| satisfy(i, is_non_digit));
+        or(|i| look_ahead(i, |i| satisfy(i, is_non_digit).map(|_| ())), |i| eof(i));
 
         ret 0
     }
@@ -85,7 +85,6 @@ fn int_value<I: U8Input>(i: I) -> SimpleResult<I, i32> {
 
 fn value<I: U8Input>(i: I) -> SimpleResult<I, Value> {
     int_value(i).map(|v| Value::Int(v))
-
 }
 
 fn argument<I: U8Input>(i: I) -> SimpleResult<I, (String, Value)> {
@@ -170,5 +169,24 @@ pub fn parse(input: &[u8]) -> Result<SelectionSet, (&[u8], parsers::Error<u8>)> 
     match parse_only(query, input) {
         Ok(ss) => Ok(ss.unwrap()),
         Err(err) => Err(err),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use parser::*;
+
+    #[test]
+    fn value_int() {
+        assert_eq!(parse_only(value, b"42"), Ok(Value::Int(42)));
+        assert_eq!(parse_only(value, b"-42"), Ok(Value::Int(-42)));
+        assert_eq!(parse_only(value, b"042"), unexpected(b"042"));
+        assert_eq!(parse_only(value, b"-042"), unexpected(b"042"));
+        assert_eq!(parse_only(value, b"0"), Ok(Value::Int(0)));
+        assert_eq!(parse_only(value, b"-0"), Ok(Value::Int(0)));
+    }
+
+    fn unexpected(input: &[u8]) -> Result<Value, (&[u8], parsers::Error<u8>)> {
+        Err::<Value, (&[u8], parsers::Error<u8>)>((input, parsers::Error::unexpected()))
     }
 }
