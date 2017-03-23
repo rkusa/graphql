@@ -1,15 +1,16 @@
 use chomp::parsers;
 use chomp::prelude::*;
-use chomp::ascii::{is_alphanumeric, is_alpha, is_digit, skip_whitespace, decimal};
+use chomp::ascii::{is_alphanumeric, is_alpha, is_digit, skip_whitespace};
 use chomp::combinators::look_ahead;
 use resolve::{Value as ResolveValue, Resolvable, ResolveError, resolve};
 use futures::{future, Future, BoxFuture};
+use std::str;
 
 #[derive(PartialEq, Debug)]
 pub enum Value {
     // [Const]Variable
     Int(i32), // IntValue
-    // FloatValue
+    Float(f32), // FloatValue
     String(String), // StringValue
     // BooleanValue
     Null, // NullValue
@@ -42,49 +43,113 @@ pub struct SelectionSet {
     pub fields: Vec<Field>,
 }
 
-fn is_valid_name_first_character(c: u8) -> bool {
-    c == b'_' || is_alpha(c)
-}
-
-fn is_valid_name_character(c: u8) -> bool {
-    c == b'_' || is_alphanumeric(c)
-}
-
-fn is_non_zero_digit(c: u8) -> bool {
-    c >= b'1' && c <= b'9'
-}
-
-fn is_non_digit(c: u8) -> bool {
-    !is_digit(c)
+// TODO: remove once new chomp released
+#[inline]
+pub fn skip_while1<I: Input, F>(i: I, mut f: F) -> SimpleResult<I, ()>
+    where F: FnMut(I::Token) -> bool
+{
+    satisfy(i, &mut f).then(|i| skip_while(i, f))
 }
 
 fn name<I: U8Input>(i: I) -> SimpleResult<I, String> {
+    #[inline]
+    fn is_valid_name_first_character(c: u8) -> bool {
+        c == b'_' || is_alpha(c)
+    }
+
+    #[inline]
+    fn is_valid_name_character(c: u8) -> bool {
+        c == b'_' || is_alphanumeric(c)
+    }
+
     look_ahead(i, |i| satisfy(i, is_valid_name_first_character)).then(|i|
         take_while1(i, is_valid_name_character).bind(|i, name|
             // TODO: no unwrap
             i.ret(String::from_utf8(name.to_vec()).unwrap())))
 }
 
-fn zero<I: U8Input>(i: I) -> SimpleResult<I, i32> {
-    parse!{i;
-        token(b'0');
-        or(|i| look_ahead(i, |i| satisfy(i, is_non_digit).map(|_| ())), |i| eof(i));
-
-        ret 0
+#[inline]
+pub fn number_value<I: U8Input>(i: I) -> SimpleResult<I, Value> {
+    #[inline]
+    fn is_non_zero_digit(c: u8) -> bool {
+        c >= b'1' && c <= b'9'
     }
-}
 
-fn int_value<I: U8Input>(i: I) -> SimpleResult<I, i32> {
-    option(i, |i| token(i, b'-').map(|c| Some(c)), None).bind(|i, sign| {
+    // #[inline]
+    // fn is_non_digit(c: u8) -> bool {
+    //     !is_digit(c)
+    // }
+
+    #[inline]
+    fn negative_sign<I: U8Input>(i: I) -> SimpleResult<I, u8> {
+        option(i, |i| token(i, b'-'), b'+')
+    }
+
+    // #[inline]
+    // fn zero<I: U8Input>(i: I) -> SimpleResult<I, ()> {
+    //     token(i, b'0').bind(|i, zero| {
+    //                             or(i,
+    //                                |i| look_ahead(i, |i| satisfy(i, is_non_digit).map(|_| ())),
+    //                                |i| eof(i))
+
+    //                         })
+    // }
+
+    #[inline]
+    fn integer_part<I: U8Input>(i: I) -> SimpleResult<I, ()> {
         or(i,
-           |i| zero(i),
-           |i| look_ahead(i, |i| satisfy(i, is_non_zero_digit)).then(|i| decimal(i)))
-                .map(|int| if sign.is_some() { -int } else { int })
+           |i| token(i, b'0').map(|_| ()),
+           |i| skip_while1(i, is_non_zero_digit).then(|i| skip_while(i, is_digit)))
+    }
+
+    #[inline]
+    fn fraction_part<I: U8Input>(i: I) -> SimpleResult<I, bool> {
+        option(i,
+               |i| token(i, b'.').then(|i| skip_while1(i, is_digit)).map(|_| true),
+               false)
+    }
+
+    #[inline]
+    fn exponent_indicator<I: U8Input>(i: I) -> SimpleResult<I, ()> {
+        or(i, |i| token(i, b'e'), |i| token(i, b'E')).map(|_| ())
+    }
+
+    #[inline]
+    fn sign<I: U8Input>(i: I) -> SimpleResult<I, ()> {
+        option(i, |i| or(i, |i| token(i, b'+'), |i| token(i, b'-')), b'+').map(|_| ())
+    }
+
+    #[inline]
+    fn exponent<I: U8Input>(i: I) -> SimpleResult<I, bool> {
+        option(i,
+               |i| {
+                   exponent_indicator(i).then(sign).then(|i| skip_while1(i, is_digit)).map(|_| true)
+               },
+               false)
+
+    }
+
+    matched_by(i, |i| {
+        negative_sign(i).then(integer_part).then(fraction_part)
+        .bind(|i, has_fraction| exponent(i).map(|has_exponent|  has_fraction || has_exponent))
     })
+            .map(|(b, is_float)| {
+                let v = b.to_vec();
+                // TODO: no unwrap
+                let s = str::from_utf8(&v).unwrap();
+                println!("{}", s);
+
+                // TODO: no unwrap
+                if is_float {
+                    Value::Float(s.parse().unwrap())
+                } else {
+                    Value::Int(s.parse().unwrap())
+                }
+            })
 }
 
 fn value<I: U8Input>(i: I) -> SimpleResult<I, Value> {
-    int_value(i).map(|v| Value::Int(v))
+    number_value(i)
 }
 
 fn argument<I: U8Input>(i: I) -> SimpleResult<I, (String, Value)> {
@@ -180,13 +245,46 @@ mod test {
     fn value_int() {
         assert_eq!(parse_only(value, b"42"), Ok(Value::Int(42)));
         assert_eq!(parse_only(value, b"-42"), Ok(Value::Int(-42)));
-        assert_eq!(parse_only(value, b"042"), unexpected(b"042"));
-        assert_eq!(parse_only(value, b"-042"), unexpected(b"042"));
         assert_eq!(parse_only(value, b"0"), Ok(Value::Int(0)));
         assert_eq!(parse_only(value, b"-0"), Ok(Value::Int(0)));
+
+        // skipping wrong number parts
+        assert_eq!(parse_only(value, b"042"), Ok(Value::Int(0)));
+        // assert_eq!(parse_only(value, b"042"), unexpected(b"042"));
+        assert_eq!(parse_only(value, b"-042"), Ok(Value::Int(0)));
+        // assert_eq!(parse_only(value, b"-042"), unexpected(b"042"));
+
+        // TODO: test overflow
     }
 
-    fn unexpected(input: &[u8]) -> Result<Value, (&[u8], parsers::Error<u8>)> {
-        Err::<Value, (&[u8], parsers::Error<u8>)>((input, parsers::Error::unexpected()))
+    #[test]
+    fn value_float() {
+        assert_eq!(parse_only(value, b"1.0"), Ok(Value::Float(1.0)));
+        assert_eq!(parse_only(value, b"0.0"), Ok(Value::Float(0.0)));
+        assert_eq!(parse_only(value, b"0.04"), Ok(Value::Float(0.04)));
+
+        assert_eq!(parse_only(value, b"4.2e5"), Ok(Value::Float(420000.0)));
+        assert_eq!(parse_only(value, b"4.2E5"), Ok(Value::Float(420000.0)));
+        assert_eq!(parse_only(value, b"4.2e+5"), Ok(Value::Float(420000.0)));
+        assert_eq!(parse_only(value, b"4.2E+5"), Ok(Value::Float(420000.0)));
+        assert_eq!(parse_only(value, b"4.2e-5"), Ok(Value::Float(0.000042)));
+        assert_eq!(parse_only(value, b"4.2E-5"), Ok(Value::Float(0.000042)));
+        assert_eq!(parse_only(value, b"42e+5"), Ok(Value::Float(4200000.0)));
+        assert_eq!(parse_only(value, b"42E+5"), Ok(Value::Float(4200000.0)));
+        assert_eq!(parse_only(value, b"42e-5"), Ok(Value::Float(0.00042)));
+        assert_eq!(parse_only(value, b"42E-5"), Ok(Value::Float(0.00042)));
+
+        // skipping wrong number parts
+        assert_eq!(parse_only(value, b"42."), Ok(Value::Int(42)));
+        assert_eq!(parse_only(value, b"42.0e"), Ok(Value::Float(42.0)));
+        assert_eq!(parse_only(value, b"42.0E"), Ok(Value::Float(42.0)));
+        assert_eq!(parse_only(value, b"42e+"), Ok(Value::Int(42)));
+        assert_eq!(parse_only(value, b"42E-"), Ok(Value::Int(42)));
+
+        // TODO: test overflow
     }
+
+    // fn unexpected(input: &[u8]) -> Result<Value, (&[u8], parsers::Error<u8>)> {
+    //     Err::<Value, (&[u8], parsers::Error<u8>)>((input, parsers::Error::unexpected()))
+    // }
 }
