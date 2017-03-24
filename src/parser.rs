@@ -9,10 +9,10 @@ use std::str;
 #[derive(PartialEq, Debug)]
 pub enum Value {
     // [Const]Variable
-    Int(i32), // IntValue
-    Float(f32), // FloatValue
-    String(String), // StringValue
-    // BooleanValue
+    Int(i32),
+    Float(f32),
+    String(String),
+    Boolean(bool),
     Null, // NullValue
           // EnumValue
           // ListValue[?Const]
@@ -68,7 +68,6 @@ fn name<I: U8Input>(i: I) -> SimpleResult<I, String> {
             i.ret(String::from_utf8(name.to_vec()).unwrap())))
 }
 
-#[inline]
 pub fn number_value<I: U8Input>(i: I) -> SimpleResult<I, Value> {
     #[inline]
     fn is_non_zero_digit(c: u8) -> bool {
@@ -148,8 +147,14 @@ pub fn number_value<I: U8Input>(i: I) -> SimpleResult<I, Value> {
             })
 }
 
+pub fn boolean_value<I: U8Input>(i: I) -> SimpleResult<I, Value> {
+    or(i,
+       |i| string(i, b"true").map(|_| Value::Boolean(true)),
+       |i| string(i, b"false").map(|_| Value::Boolean(false)))
+}
+
 fn value<I: U8Input>(i: I) -> SimpleResult<I, Value> {
-    number_value(i)
+    or(i, |i| number_value(i), |i| boolean_value(i))
 }
 
 fn argument<I: U8Input>(i: I) -> SimpleResult<I, (String, Value)> {
@@ -282,6 +287,12 @@ mod test {
         assert_eq!(parse_only(value, b"42E-"), Ok(Value::Int(42)));
 
         // TODO: test overflow
+    }
+
+    #[test]
+    fn value_boolean() {
+        assert_eq!(parse_only(value, b"true"), Ok(Value::Boolean(true)));
+        assert_eq!(parse_only(value, b"false"), Ok(Value::Boolean(false)));
     }
 
     // fn unexpected(input: &[u8]) -> Result<Value, (&[u8], parsers::Error<u8>)> {
