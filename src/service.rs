@@ -74,7 +74,7 @@ fn handle_graphql_request<T>(buffer: &Vec<u8>, root: T) -> BoxFuture<Response, E
     let result = serde_json::from_slice::<PostQuery>(&buffer)
         .map_err(|_| Error::BadRequest("invalid json body".to_string()))
         .and_then(|query| {
-            parser::parse(query.query.as_bytes())
+            parser::parse(&query.query)
                 .map_err(|_| Error::BadRequest("invalid graphql query".to_string()))
         })
         .map(|ss| {

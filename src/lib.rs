@@ -5,8 +5,11 @@ extern crate serde_derive;
 extern crate futures;
 extern crate tokio_service;
 extern crate hyper;
-#[macro_use]
-extern crate chomp;
+extern crate core;
+
+pub mod service;
+pub mod parser;
+mod resolve;
 
 use std::io;
 
@@ -15,10 +18,6 @@ use futures::{future, Future, BoxFuture};
 pub use parser::{Field, parse};
 pub use resolve::{Resolvable, ResolveError, Value};
 use resolve::resolve;
-
-pub mod service;
-pub mod parser;
-mod resolve;
 
 pub struct GraphQL;
 

@@ -1,8 +1,7 @@
 use std::{fmt, str, error};
 
 use futures::{future, Future, BoxFuture};
-use parser::{SelectionSet};
-pub use parser::{Field, parse};
+use parser::{SelectionSet, Field};
 use serde::ser::{Serialize, Serializer, SerializeMap};
 use serde_json::{Number};
 
