@@ -24,6 +24,7 @@ pub enum Token<'a> {
     Int(i32),
     Float(f32),
     Boolean(bool),
+    Null,
 
     // keywords
     EOF,
@@ -108,6 +109,7 @@ impl<'a> Lexer<'a> {
         match string {
             "true" => Ok(Token::Boolean(true)),
             "false" => Ok(Token::Boolean(false)),
+            "null" => Ok(Token::Null),
             _ => Ok(Token::Name(string)),
         }
     }

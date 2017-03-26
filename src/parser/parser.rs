@@ -9,10 +9,10 @@ pub enum Value {
     Float(f32),
     String(String),
     Boolean(bool),
-    // Null, // NullValue
-          // EnumValue
-          // ListValue[?Const]
-          // ObjectValue[/Const]
+    Null,
+    Enum(String),
+  // ListValue[?Const]
+  // ObjectValue[/Const]
 }
 
 
@@ -161,6 +161,8 @@ impl<'a> Parser<'a> {
     }
 
     fn field(&mut self) -> Result<Option<Field>, ParserError> {
+        // TODO: [Alias] Name [Arguments] [Directives] [SelectionSet]
+
         if let Some(&Token::Name(n)) = self.peek_token() {
             self.next_token(); // consume name
 
@@ -241,6 +243,8 @@ impl<'a> Parser<'a> {
             Some(Token::Int(i)) => Ok(Value::Int(i)),
             Some(Token::Float(f)) => Ok(Value::Float(f)),
             Some(Token::Boolean(b)) => Ok(Value::Boolean(b)),
+            Some(Token::Null) => Ok(Value::Null),
+            Some(Token::Name(s)) => Ok(Value::Enum(s.to_string())),
             Some(_) => Err(ParserError::UnexpectedToken),
             None => Err(ParserError::ExpectedToken),
         }
@@ -302,6 +306,30 @@ mod test {
             selection_set: Some(SelectionSet{
                 fields: vec![new_field("name")]
             }),
+        }]}));
+        assert_eq!(parse("{user (id: true)}"), Ok(SelectionSet{fields:vec![Field{
+            name: "user".to_string(),
+            alias: None,
+            arguments: Some(vec![("id".to_string(), Value::Boolean(true))]),
+            selection_set: None,
+        }]}));
+        assert_eq!(parse("{user (id: false)}"), Ok(SelectionSet{fields:vec![Field{
+            name: "user".to_string(),
+            alias: None,
+            arguments: Some(vec![("id".to_string(), Value::Boolean(false))]),
+            selection_set: None,
+        }]}));
+        assert_eq!(parse("{user (id: null)}"), Ok(SelectionSet{fields:vec![Field{
+            name: "user".to_string(),
+            alias: None,
+            arguments: Some(vec![("id".to_string(), Value::Null)]),
+            selection_set: None,
+        }]}));
+        assert_eq!(parse("{user (id: whatever)}"), Ok(SelectionSet{fields:vec![Field{
+            name: "user".to_string(),
+            alias: None,
+            arguments: Some(vec![("id".to_string(), Value::Enum("whatever".to_string()))]),
+            selection_set: None,
         }]}));
     }
 }
