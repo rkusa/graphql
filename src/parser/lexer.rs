@@ -15,6 +15,8 @@ pub enum Token<'a> {
     LeftParan,
     RightParan,
     Colon,
+    DollarSign,
+    EqualSign,
 
     // two-character tokens
 
@@ -72,6 +74,14 @@ impl<'a> Lexer<'a> {
                 ':' => {
                     self.iter.next();
                     Ok(Token::Colon)
+                }
+                '=' => {
+                    self.iter.next();
+                    Ok(Token::EqualSign)
+                }
+                '$' => {
+                    self.iter.next();
+                    Ok(Token::DollarSign)
                 }
                 '\n' | '\r' | '\t' | ' ' => {
                     self.iter.next();

@@ -4,7 +4,7 @@ use futures::{future, Future, BoxFuture};
 
 #[derive(PartialEq, Debug)]
 pub enum Value {
-    // [Const]Variable
+    Variable(String, Option<Box<Value>>),
     Int(i32),
     Float(f32),
     String(String),
@@ -229,7 +229,7 @@ impl<'a> Parser<'a> {
 
             self.expect(Token::Colon)?;
 
-            let value = self.value()?;
+            let value = self.value(false)?;
 
             Ok(Some((name.to_string(), value)))
         } else {
@@ -237,16 +237,46 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn value(&mut self) -> Result<Value, ParserError> {
-        match self.next_token() {
-            Some(Token::String(s)) => Ok(Value::String(s)),
-            Some(Token::Int(i)) => Ok(Value::Int(i)),
-            Some(Token::Float(f)) => Ok(Value::Float(f)),
-            Some(Token::Boolean(b)) => Ok(Value::Boolean(b)),
-            Some(Token::Null) => Ok(Value::Null),
-            Some(Token::Name(s)) => Ok(Value::Enum(s.to_string())),
-            Some(_) => Err(ParserError::UnexpectedToken),
-            None => Err(ParserError::ExpectedToken),
+    fn value(&mut self, const_only: bool) -> Result<Value, ParserError> {
+        // is variable
+        if let Some(&Token::DollarSign) = self.peek_token() {
+            if const_only {
+                return Err(ParserError::UnexpectedToken)
+            }
+
+            self.next_token(); // consume dollar sign
+
+            let name = match self.next_token() {
+               Some(Token::Name(s)) => s.to_string(),
+               Some(Token::Boolean(true)) => "true".to_string(),
+               Some(Token::Boolean(false)) => "false".to_string(),
+               Some(Token::Null) => "null".to_string(),
+               Some(_) | None => String::new(),
+            };
+
+            if name.len() == 0 {
+                return Err(ParserError::UnexpectedToken)
+            }
+
+            // default value
+            if let Some(&Token::EqualSign) = self.peek_token() {
+                self.next_token(); // consume equal sign
+
+                Ok(Value::Variable(name, Some(Box::new(self.value(true)?))))
+            } else {
+                Ok(Value::Variable(name, None))
+            }
+        } else {
+            match self.next_token() {
+                Some(Token::String(s)) => Ok(Value::String(s)),
+                Some(Token::Int(i)) => Ok(Value::Int(i)),
+                Some(Token::Float(f)) => Ok(Value::Float(f)),
+                Some(Token::Boolean(b)) => Ok(Value::Boolean(b)),
+                Some(Token::Null) => Ok(Value::Null),
+                Some(Token::Name(s)) => Ok(Value::Enum(s.to_string())),
+                Some(_) => Err(ParserError::UnexpectedToken),
+                None => Err(ParserError::ExpectedToken),
+            }
         }
     }
 
@@ -331,5 +361,36 @@ mod test {
             arguments: Some(vec![("id".to_string(), Value::Enum("whatever".to_string()))]),
             selection_set: None,
         }]}));
+        assert_eq!(parse("{user (id: $variable)}"), Ok(SelectionSet{fields:vec![Field{
+            name: "user".to_string(),
+            alias: None,
+            arguments: Some(vec![("id".to_string(), Value::Variable("variable".to_string(), None))]),
+            selection_set: None,
+        }]}));
+        assert_eq!(parse("{user (id: $true)}"), Ok(SelectionSet{fields:vec![Field{
+            name: "user".to_string(),
+            alias: None,
+            arguments: Some(vec![("id".to_string(), Value::Variable("true".to_string(), None))]),
+            selection_set: None,
+        }]}));
+        assert_eq!(parse("{user (id: $false)}"), Ok(SelectionSet{fields:vec![Field{
+            name: "user".to_string(),
+            alias: None,
+            arguments: Some(vec![("id".to_string(), Value::Variable("false".to_string(), None))]),
+            selection_set: None,
+        }]}));
+        assert_eq!(parse("{user (id: $null)}"), Ok(SelectionSet{fields:vec![Field{
+            name: "user".to_string(),
+            alias: None,
+            arguments: Some(vec![("id".to_string(), Value::Variable("null".to_string(), None))]),
+            selection_set: None,
+        }]}));
+        assert_eq!(parse("{user (id: $foo = \"bar\")}"), Ok(SelectionSet{fields:vec![Field{
+            name: "user".to_string(),
+            alias: None,
+            arguments: Some(vec![("id".to_string(), Value::Variable("foo".to_string(), Some(Box::new(Value::String("bar".to_string())))))]),
+            selection_set: None,
+        }]}));
+        assert_eq!(parse("{user (id: $foo = $bar)}"), Err(ParserError::UnexpectedToken));
     }
 }
