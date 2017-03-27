@@ -60,49 +60,50 @@ impl<'a> Lexer<'a> {
     // }
 
     pub fn scan(&mut self) -> Result<Token<'a>, LexerError> {
-        if let Some(&(i, c)) = self.iter.peek() {
-            match c {
-                '"' => return self.scan_string(i),
-                '-' | '0'...'9' => return self.scan_number(i),
-                '_' | 'a'...'z' | 'A'...'Z' => return self.scan_identifier(i),
-                '{' => {
-                    self.iter.next();
-                    Ok(Token(TokenKind::LeftBrace, i))
+        loop {
+            if let Some(&(i, c)) = self.iter.peek() {
+                match c {
+                    '"' => return self.scan_string(i),
+                    '-' | '0'...'9' => return self.scan_number(i),
+                    '_' | 'a'...'z' | 'A'...'Z' => return self.scan_identifier(i),
+                    '{' => {
+                        self.iter.next();
+                        return Ok(Token(TokenKind::LeftBrace, i));
+                    }
+                    '}' => {
+                        self.iter.next();
+                        return Ok(Token(TokenKind::RightBrace, i));
+                    }
+                    '(' => {
+                        self.iter.next();
+                        return Ok(Token(TokenKind::LeftParan, i));
+                    }
+                    ')' => {
+                        self.iter.next();
+                        return Ok(Token(TokenKind::RightParan, i));
+                    }
+                    ':' => {
+                        self.iter.next();
+                        return Ok(Token(TokenKind::Colon, i));
+                    }
+                    '=' => {
+                        self.iter.next();
+                        return Ok(Token(TokenKind::EqualSign, i));
+                    }
+                    '$' => {
+                        self.iter.next();
+                        return Ok(Token(TokenKind::DollarSign, i));
+                    }
+                    '\n' | '\r' | '\t' | ' ' => {
+                        self.iter.next();
+                        // continue in loop
+                    }
+                    _ => return Err(LexerError(ErrorKind::UnexpectedCharacter, i)),
                 }
-                '}' => {
-                    self.iter.next();
-                    Ok(Token(TokenKind::RightBrace, i))
-                }
-                '(' => {
-                    self.iter.next();
-                    Ok(Token(TokenKind::LeftParan, i))
-                }
-                ')' => {
-                    self.iter.next();
-                    Ok(Token(TokenKind::RightParan, i))
-                }
-                ':' => {
-                    self.iter.next();
-                    Ok(Token(TokenKind::Colon, i))
-                }
-                '=' => {
-                    self.iter.next();
-                    Ok(Token(TokenKind::EqualSign, i))
-                }
-                '$' => {
-                    self.iter.next();
-                    Ok(Token(TokenKind::DollarSign, i))
-                }
-                '\n' | '\r' | '\t' | ' ' => {
-                    self.iter.next();
-                    self.scan()
-                }
-                _ => Err(LexerError(ErrorKind::UnexpectedCharacter, i)), // TODO: possible stack trace error?
+            } else {
+                return Ok(Token(TokenKind::EOF, self.src.len()));
             }
-        } else {
-            Ok(Token(TokenKind::EOF, self.src.len()))
         }
-
     }
 
     fn scan_identifier(&mut self, i: usize) -> Result<Token<'a>, LexerError> {
@@ -195,7 +196,9 @@ impl<'a> Lexer<'a> {
                 // allowed source characters are /[\u0009\u000A\u000D\u0020-\uFFFF]/
                 // in this case except LF (\u000A) and CR (\u000D)
                 '\u{0000}'...'\u{008}' |
-                '\u{000A}'...'\u{001F}' => return Err(LexerError(ErrorKind::UnexpectedCharacter, i)),
+                '\u{000A}'...'\u{001F}' => {
+                    return Err(LexerError(ErrorKind::UnexpectedCharacter, i))
+                }
                 _ => continue,
             }
         }
@@ -303,7 +306,8 @@ mod test {
         // assert_eq!(Lexer::new("-042").scan(), unexpected(b"042"));
 
         // max values
-        assert_eq!(Lexer::new("2147483647").scan(), Ok(Token(TokenKind::Int(2147483647), 0)));
+        assert_eq!(Lexer::new("2147483647").scan(),
+                   Ok(Token(TokenKind::Int(2147483647), 0)));
         assert_eq!(Lexer::new("-2147483648").scan(),
                    Ok(Token(TokenKind::Int(-2147483648), 0)));
 
@@ -316,25 +320,40 @@ mod test {
 
     #[test]
     fn value_float() {
-        assert_eq!(Lexer::new("1.0").scan(), Ok(Token(TokenKind::Float(1.0), 0)));
-        assert_eq!(Lexer::new("0.0").scan(), Ok(Token(TokenKind::Float(0.0), 0)));
-        assert_eq!(Lexer::new("0.04").scan(), Ok(Token(TokenKind::Float(0.04), 0)));
+        assert_eq!(Lexer::new("1.0").scan(),
+                   Ok(Token(TokenKind::Float(1.0), 0)));
+        assert_eq!(Lexer::new("0.0").scan(),
+                   Ok(Token(TokenKind::Float(0.0), 0)));
+        assert_eq!(Lexer::new("0.04").scan(),
+                   Ok(Token(TokenKind::Float(0.04), 0)));
 
-        assert_eq!(Lexer::new("4.2e5").scan(), Ok(Token(TokenKind::Float(420000.0), 0)));
-        assert_eq!(Lexer::new("4.2E5").scan(), Ok(Token(TokenKind::Float(420000.0), 0)));
-        assert_eq!(Lexer::new("4.2e+5").scan(), Ok(Token(TokenKind::Float(420000.0), 0)));
-        assert_eq!(Lexer::new("4.2E+5").scan(), Ok(Token(TokenKind::Float(420000.0), 0)));
-        assert_eq!(Lexer::new("4.2e-5").scan(), Ok(Token(TokenKind::Float(0.000042), 0)));
-        assert_eq!(Lexer::new("4.2E-5").scan(), Ok(Token(TokenKind::Float(0.000042), 0)));
-        assert_eq!(Lexer::new("42e+5").scan(), Ok(Token(TokenKind::Float(4200000.0), 0)));
-        assert_eq!(Lexer::new("42E+5").scan(), Ok(Token(TokenKind::Float(4200000.0), 0)));
-        assert_eq!(Lexer::new("42e-5").scan(), Ok(Token(TokenKind::Float(0.00042), 0)));
-        assert_eq!(Lexer::new("42E-5").scan(), Ok(Token(TokenKind::Float(0.00042), 0)));
+        assert_eq!(Lexer::new("4.2e5").scan(),
+                   Ok(Token(TokenKind::Float(420000.0), 0)));
+        assert_eq!(Lexer::new("4.2E5").scan(),
+                   Ok(Token(TokenKind::Float(420000.0), 0)));
+        assert_eq!(Lexer::new("4.2e+5").scan(),
+                   Ok(Token(TokenKind::Float(420000.0), 0)));
+        assert_eq!(Lexer::new("4.2E+5").scan(),
+                   Ok(Token(TokenKind::Float(420000.0), 0)));
+        assert_eq!(Lexer::new("4.2e-5").scan(),
+                   Ok(Token(TokenKind::Float(0.000042), 0)));
+        assert_eq!(Lexer::new("4.2E-5").scan(),
+                   Ok(Token(TokenKind::Float(0.000042), 0)));
+        assert_eq!(Lexer::new("42e+5").scan(),
+                   Ok(Token(TokenKind::Float(4200000.0), 0)));
+        assert_eq!(Lexer::new("42E+5").scan(),
+                   Ok(Token(TokenKind::Float(4200000.0), 0)));
+        assert_eq!(Lexer::new("42e-5").scan(),
+                   Ok(Token(TokenKind::Float(0.00042), 0)));
+        assert_eq!(Lexer::new("42E-5").scan(),
+                   Ok(Token(TokenKind::Float(0.00042), 0)));
 
         // skipping wrong number parts
         assert_eq!(Lexer::new("42.").scan(), Ok(Token(TokenKind::Int(42), 0)));
-        assert_eq!(Lexer::new("42.0e").scan(), Ok(Token(TokenKind::Float(42.0), 0)));
-        assert_eq!(Lexer::new("42.0E").scan(), Ok(Token(TokenKind::Float(42.0), 0)));
+        assert_eq!(Lexer::new("42.0e").scan(),
+                   Ok(Token(TokenKind::Float(42.0), 0)));
+        assert_eq!(Lexer::new("42.0E").scan(),
+                   Ok(Token(TokenKind::Float(42.0), 0)));
         assert_eq!(Lexer::new("42e+").scan(), Ok(Token(TokenKind::Int(42), 0)));
         assert_eq!(Lexer::new("42E-").scan(), Ok(Token(TokenKind::Int(42), 0)));
 
@@ -353,8 +372,10 @@ mod test {
 
     #[test]
     fn value_boolean() {
-        assert_eq!(Lexer::new("true").scan(), Ok(Token(TokenKind::Boolean(true), 0)));
-        assert_eq!(Lexer::new("false").scan(), Ok(Token(TokenKind::Boolean(false), 0)));
+        assert_eq!(Lexer::new("true").scan(),
+                   Ok(Token(TokenKind::Boolean(true), 0)));
+        assert_eq!(Lexer::new("false").scan(),
+                   Ok(Token(TokenKind::Boolean(false), 0)));
     }
 
     #[test]
@@ -370,7 +391,8 @@ mod test {
         assert_eq!(Lexer::new(r#""🦈""#).scan(),
                    Ok(Token(TokenKind::String(r#"🦈"#.to_string()), 0)));
         assert_eq!(Lexer::new(r#""a
-            b""#).scan(),
+            b""#)
+                           .scan(),
                    Err(LexerError(ErrorKind::UnexpectedCharacter, 2)));
         assert_eq!(Lexer::new("\"\t\"").scan(),
                    Ok(Token(TokenKind::String("\t".to_string()), 0)));
