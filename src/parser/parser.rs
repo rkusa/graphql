@@ -1,6 +1,7 @@
 use super::lexer::{Lexer, Token, LexerError};
-use ::{Resolvable, Value as ResolveValue, ResolveError, resolve};
-use futures::{future, Future, BoxFuture};
+use ::{Resolvable, Resolve, ResolveError};
+use resolve::resolve;
+use futures::{future, Future};
 
 #[derive(PartialEq, Debug)]
 pub enum Value {
@@ -25,12 +26,12 @@ pub struct Field {
 }
 
 impl Field {
-    pub fn resolve<T>(&self, obj: &T) -> BoxFuture<ResolveValue, ResolveError>
+    pub fn resolve<T>(&self, obj: &T) -> Option<Resolve>
         where T: Resolvable
     {
         match self.selection_set {
-            Some(ref selection_set) => resolve(&selection_set, obj),
-            None => future::err(ResolveError::NoSubFields).boxed(),
+            Some(ref selection_set) => Some(Resolve::Async(resolve(&selection_set, obj))),
+            None => Some(Resolve::Async(future::err(ResolveError::NoSubFields).boxed())),
         }
     }
 }

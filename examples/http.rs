@@ -5,8 +5,8 @@ extern crate graphql;
 extern crate futures_cpupool;
 
 use hyper::server::Http;
-use graphql::{Resolvable, ResolveError, Value, Field};
-use futures::{future, Future, BoxFuture};
+use graphql::{Resolvable, Field, Resolve};
+// use futures::{future, Future, BoxFuture};
 
 struct User {
     id: i32,
@@ -14,20 +14,19 @@ struct User {
 }
 
 impl Resolvable for User {
-    fn resolve(&self, field: &Field) -> BoxFuture<Value, ResolveError> {
-        let f = match field.name.as_ref() {
-            "id" => future::ok(Value::Number(self.id.into())),
-            "name" => future::ok(Value::String(self.name.to_string())),
-            _ => future::err(ResolveError::InvalidField(field.name.to_string())),
-        };
-        f.boxed()
+    fn resolve(&self, field: &Field) -> Option<Resolve> {
+        match field.name.as_ref() {
+            "id" => Some(self.id.into()),
+            "name" => Some(self.name.to_string().into()),
+            _ => None,
+        }
     }
 }
 
 struct Root;
 
 impl Resolvable for Root {
-    fn resolve(&self, field: &Field) -> BoxFuture<Value, ResolveError> {
+    fn resolve(&self, field: &Field) -> Option<Resolve> {
         match field.name.as_ref() {
             "user" => {
                 let user = User {
@@ -36,7 +35,7 @@ impl Resolvable for Root {
                 };
                 field.resolve(&user)
             }
-            _ => future::err(ResolveError::InvalidField(field.name.to_string())).boxed(),
+            _ => None,
         }
     }
 }

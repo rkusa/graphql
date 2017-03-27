@@ -7,7 +7,8 @@ use hyper::header::{ContentType, ContentLength};
 use hyper::server::{Service, NewService, Request, Response};
 use futures::{future, Future, BoxFuture, Stream};
 use serde_json;
-use ::{Resolvable, resolve, Field, Value, ResolveError, parser};
+use ::{Resolvable, Resolve, Field, parser};
+use resolve::resolve;
 
 #[derive(Debug)]
 pub enum Error {
@@ -44,7 +45,7 @@ struct PostQuery {
 struct Root(Arc<Mutex<Resolvable + Send>>);
 
 impl Resolvable for Root {
-    fn resolve(&self, field: &Field) -> BoxFuture<Value, ResolveError> {
+    fn resolve(&self, field: &Field) -> Option<Resolve> {
         let root = self.0.lock().unwrap();
         root.resolve(field)
     }
