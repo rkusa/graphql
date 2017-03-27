@@ -76,7 +76,10 @@ fn handle_graphql_request<T>(buffer: &Vec<u8>, root: T) -> BoxFuture<Response, E
         .map_err(|_| Error::BadRequest("invalid json body".to_string()))
         .and_then(|query| {
             parser::parse(&query.query)
-                .map_err(|_| Error::BadRequest("invalid graphql query".to_string()))
+                .map_err(|err| {
+                    println!("{:?}", err);
+                    Error::BadRequest(err.as_str())
+                })
         })
         .map(|ss| {
             resolve(&ss, &root)

@@ -1,4 +1,4 @@
-use super::lexer::{Lexer, Token, LexerError};
+use super::lexer::{Lexer, TokenKind, LexerError};
 use ::{Resolvable, Resolve, ResolveError};
 use resolve::resolve;
 use futures::{future, Future};
@@ -44,11 +44,15 @@ pub struct SelectionSet {
 struct Parser<'a> {
     lexer: Lexer<'a>,
     lexer_error: Option<LexerError>,
-    peeked: Option<Token<'a>>,
+    peeked: Option<TokenKind<'a>>,
+    pos: usize,
 }
 
 #[derive(Debug, PartialEq)]
-pub enum ParserError {
+pub struct ParserError(pub ErrorKind, pub usize);
+
+#[derive(Debug, PartialEq)]
+pub enum ErrorKind {
     ExpectedToken,
     UnexpectedToken,
     LexerError(LexerError),
@@ -56,9 +60,26 @@ pub enum ParserError {
     InvalidQuery,
 }
 
-impl From<LexerError> for ParserError {
-    fn from(err: LexerError) -> ParserError {
-        ParserError::LexerError(err)
+impl ParserError {
+    pub fn as_str(&self) -> String {
+        match self.0 {
+            ErrorKind::ExpectedToken =>
+                format!("expected token at {}", self.1),
+            ErrorKind::UnexpectedToken =>
+                format!("unexpected token at {}", self.1),
+            ErrorKind::LexerError(_) =>
+                format!("syntax error at {}", self.1),
+            ErrorKind::UnexpectedEnd =>
+                format!("unexpected end at {}", self.1),
+            ErrorKind::InvalidQuery =>
+                format!("invalid query at {}", self.1),
+        }
+    }
+}
+
+impl From<LexerError> for ErrorKind {
+    fn from(err: LexerError) -> ErrorKind {
+        ErrorKind::LexerError(err)
     }
 }
 
@@ -70,16 +91,19 @@ pub fn parse(src: &str) -> Result<SelectionSet, ParserError> {
 impl<'a> Parser<'a> {
     fn new(src: &'a str) -> Parser {
         let lexer = Lexer::new(src);
-        Parser { lexer: lexer, lexer_error: None, peeked: None }
+        Parser { lexer: lexer, lexer_error: None, peeked: None, pos: 0 }
     }
 
     #[inline]
-    fn next_token(&mut self) -> Option<Token<'a>> {
+    fn next_token(&mut self) -> Option<TokenKind<'a>> {
         match self.peeked {
             Some(_) => self.peeked.take(),
             None => {
                 match self.lexer.scan() {
-                    Ok(token) => Some(token),
+                    Ok(token) => {
+                        self.pos = token.1;
+                        Some(token.0)
+                    },
                     Err(err) => {
                         self.lexer_error = Some(err);
                         None
@@ -90,10 +114,13 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    fn peek_token(&mut self) -> Option<&Token<'a>> {
+    fn peek_token(&mut self) -> Option<&TokenKind<'a>> {
         if self.peeked.is_none() {
             self.peeked = match self.lexer.scan() {
-                Ok(token) => Some(token),
+                Ok(token) =>  {
+                    self.pos = token.1;
+                    Some(token.0)
+                },
                 Err(err) => {
                     self.lexer_error = Some(err);
                     None
@@ -111,35 +138,36 @@ impl<'a> Parser<'a> {
 
       self.operation().map_err(|err| {
         if let Some(err) = self.lexer_error.take() {
-            err.into()
+            let pos = err.1;
+            ParserError(err.into(), pos)
         } else {
-            err
+            ParserError(err, self.pos)
         }
       })
     }
 
-    fn operation(&mut self) -> Result<SelectionSet, ParserError> {
+    fn operation(&mut self) -> Result<SelectionSet, ErrorKind> {
       // TODO: SelectionSet | (("query" | "mutation") [Name] [VariableDefinitions] [Directives] SelectionSet)
 
-      if let Some(&Token::Name(operation)) = self.peek_token() {
+      if let Some(&TokenKind::Name(operation)) = self.peek_token() {
           self.next_token(); // consume name
 
           if operation != "query" && operation != "mutation" {
-            return Err(ParserError::InvalidQuery)
+            return Err(ErrorKind::InvalidQuery)
           }
       }
 
       match self.selection_set() {
         Ok(Some(ss)) => Ok(ss),
-        Ok(None) => Err(ParserError::InvalidQuery),
+        Ok(None) => Err(ErrorKind::InvalidQuery),
         Err(err) => Err(err)
       }
     }
 
-    fn selection_set(&mut self) -> Result<Option<SelectionSet>, ParserError> {
+    fn selection_set(&mut self) -> Result<Option<SelectionSet>, ErrorKind> {
         // TODO: "{" (Field | FragmentSpread | InlineFragment)+ "}"
 
-        if let Some(&Token::LeftBrace) = self.peek_token() {
+        if let Some(&TokenKind::LeftBrace) = self.peek_token() {
             self.next_token(); // consume left brace
 
             let mut fields = vec![];
@@ -151,7 +179,7 @@ impl<'a> Parser<'a> {
               }
             }
 
-            self.expect(Token::RightBrace)?;
+            self.expect(TokenKind::RightBrace)?;
 
             Ok(Some(SelectionSet{
               fields: fields,
@@ -161,25 +189,25 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn field(&mut self) -> Result<Option<Field>, ParserError> {
+    fn field(&mut self) -> Result<Option<Field>, ErrorKind> {
         // TODO: [Alias] Name [Arguments] [Directives] [SelectionSet]
 
-        if let Some(&Token::Name(n)) = self.peek_token() {
+        if let Some(&TokenKind::Name(n)) = self.peek_token() {
             self.next_token(); // consume name
 
             let mut name = n.to_string();
             let mut alias = None;
 
-            if let Some(&Token::Colon) = self.peek_token() {
+            if let Some(&TokenKind::Colon) = self.peek_token() {
                 self.next_token(); // consume colon
 
                 match self.next_token() {
-                    Some(Token::Name(a)) => {
+                    Some(TokenKind::Name(a)) => {
                         alias = Some(name);
                         name = a.to_string()
                     },
-                    Some(_) => return Err(ParserError::UnexpectedToken),
-                    None => return Err(ParserError::InvalidQuery)
+                    Some(_) => return Err(ErrorKind::UnexpectedToken),
+                    None => return Err(ErrorKind::InvalidQuery)
                 }
             }
 
@@ -197,10 +225,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn arguments(&mut self) -> Result<Option<Vec<(String, Value)>>, ParserError> {
+    fn arguments(&mut self) -> Result<Option<Vec<(String, Value)>>, ErrorKind> {
         // "(" (Name : Value)+ ")"
 
-        if let Some(&Token::LeftParan) = self.peek_token() {
+        if let Some(&TokenKind::LeftParan) = self.peek_token() {
             self.next_token(); // consume left parent
 
             let mut arguments = vec![];
@@ -213,10 +241,10 @@ impl<'a> Parser<'a> {
             }
 
             if arguments.len() == 0 {
-                return Err(ParserError::InvalidQuery)
+                return Err(ErrorKind::InvalidQuery)
             }
 
-            self.expect(Token::RightParan)?;
+            self.expect(TokenKind::RightParan)?;
 
             Ok(Some(arguments))
         } else {
@@ -224,11 +252,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn argument(&mut self) -> Result<Option<(String, Value)>, ParserError> {
-        if let Some(&Token::Name(name)) = self.peek_token() {
+    fn argument(&mut self) -> Result<Option<(String, Value)>, ErrorKind> {
+        if let Some(&TokenKind::Name(name)) = self.peek_token() {
             self.next_token(); // consume name
 
-            self.expect(Token::Colon)?;
+            self.expect(TokenKind::Colon)?;
 
             let value = self.value(false)?;
 
@@ -238,29 +266,29 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn value(&mut self, const_only: bool) -> Result<Value, ParserError> {
+    fn value(&mut self, const_only: bool) -> Result<Value, ErrorKind> {
         // is variable
-        if let Some(&Token::DollarSign) = self.peek_token() {
+        if let Some(&TokenKind::DollarSign) = self.peek_token() {
             if const_only {
-                return Err(ParserError::UnexpectedToken)
+                return Err(ErrorKind::UnexpectedToken)
             }
 
             self.next_token(); // consume dollar sign
 
             let name = match self.next_token() {
-               Some(Token::Name(s)) => s.to_string(),
-               Some(Token::Boolean(true)) => "true".to_string(),
-               Some(Token::Boolean(false)) => "false".to_string(),
-               Some(Token::Null) => "null".to_string(),
+               Some(TokenKind::Name(s)) => s.to_string(),
+               Some(TokenKind::Boolean(true)) => "true".to_string(),
+               Some(TokenKind::Boolean(false)) => "false".to_string(),
+               Some(TokenKind::Null) => "null".to_string(),
                Some(_) | None => String::new(),
             };
 
             if name.len() == 0 {
-                return Err(ParserError::UnexpectedToken)
+                return Err(ErrorKind::UnexpectedToken)
             }
 
             // default value
-            if let Some(&Token::EqualSign) = self.peek_token() {
+            if let Some(&TokenKind::EqualSign) = self.peek_token() {
                 self.next_token(); // consume equal sign
 
                 Ok(Value::Variable(name, Some(Box::new(self.value(true)?))))
@@ -269,29 +297,28 @@ impl<'a> Parser<'a> {
             }
         } else {
             match self.next_token() {
-                Some(Token::String(s)) => Ok(Value::String(s)),
-                Some(Token::Int(i)) => Ok(Value::Int(i)),
-                Some(Token::Float(f)) => Ok(Value::Float(f)),
-                Some(Token::Boolean(b)) => Ok(Value::Boolean(b)),
-                Some(Token::Null) => Ok(Value::Null),
-                Some(Token::Name(s)) => Ok(Value::Enum(s.to_string())),
-                Some(_) => Err(ParserError::UnexpectedToken),
-                None => Err(ParserError::ExpectedToken),
+                Some(TokenKind::String(s)) => Ok(Value::String(s)),
+                Some(TokenKind::Int(i)) => Ok(Value::Int(i)),
+                Some(TokenKind::Float(f)) => Ok(Value::Float(f)),
+                Some(TokenKind::Boolean(b)) => Ok(Value::Boolean(b)),
+                Some(TokenKind::Null) => Ok(Value::Null),
+                Some(TokenKind::Name(s)) => Ok(Value::Enum(s.to_string())),
+                Some(_) => Err(ErrorKind::UnexpectedToken),
+                None => Err(ErrorKind::ExpectedToken),
             }
         }
     }
 
-    fn expect(&mut self, token: Token) -> Result<(), ParserError> {
+    fn expect(&mut self, token: TokenKind) -> Result<(), ErrorKind> {
         match self.next_token() {
             Some(t) => {
                 if t == token {
                     Ok(())
                 } else {
-                    println!("asdasd {:?} {:?}",t, token );
-                    Err(ParserError::UnexpectedToken)
+                    Err(ErrorKind::UnexpectedToken)
                 }
             },
-            None => Err(ParserError::UnexpectedEnd)
+            None => Err(ErrorKind::UnexpectedEnd)
         }
     }
 }
@@ -311,7 +338,7 @@ mod test {
 
     #[test]
     fn selection_set() {
-        assert_eq!(parse("{"), Err(ParserError::UnexpectedToken));
+        assert_eq!(parse("{"), Err(ParserError(ErrorKind::UnexpectedToken, 1)));
         assert_eq!(parse("{}"), Ok(SelectionSet{fields:vec![]}));
         assert_eq!(parse("query {}"), Ok(SelectionSet{fields:vec![]}));
         assert_eq!(parse("mutation {}"), Ok(SelectionSet{fields:vec![]}));
@@ -392,6 +419,6 @@ mod test {
             arguments: Some(vec![("id".to_string(), Value::Variable("foo".to_string(), Some(Box::new(Value::String("bar".to_string())))))]),
             selection_set: None,
         }]}));
-        assert_eq!(parse("{user (id: $foo = $bar)}"), Err(ParserError::UnexpectedToken));
+        assert_eq!(parse("{user (id: $foo = $bar)}"), Err(ParserError(ErrorKind::UnexpectedToken, 18)));
     }
 }
