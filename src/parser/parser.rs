@@ -337,6 +337,11 @@ mod test {
     }
 
     #[test]
+    fn ignore_unicode_bom() {
+        assert_eq!(parse("\u{FEFF}{}"), Ok(SelectionSet{fields:vec![]}));
+    }
+
+    #[test]
     fn selection_set() {
         assert_eq!(parse("{"), Err(ParserError(ErrorKind::UnexpectedToken, 1)));
         assert_eq!(parse("{}"), Ok(SelectionSet{fields:vec![]}));

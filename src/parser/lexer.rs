@@ -49,15 +49,18 @@ pub enum ErrorKind {
 impl<'a> Lexer<'a> {
     #[doc(hidden)]
     pub fn new(src: &'a str) -> Lexer<'a> {
-        Lexer {
+        let mut lexer = Lexer {
             iter: src.char_indices().peekable(),
             src: src,
-        }
-    }
+        };
 
-    // pub fn scan_token(&mut slef) -> Result<Token<'a>, LexerError> {
-    //     return self.scan().map(|r| r.1)
-    // }
+        if let Some(&(_, '\u{FEFF}')) = lexer.iter.peek() {
+            // skip unicode bom
+            lexer.iter.next();
+        }
+
+        lexer
+    }
 
     pub fn scan(&mut self) -> Result<Token<'a>, LexerError> {
         loop {
