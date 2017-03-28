@@ -97,7 +97,7 @@ impl<'a> Lexer<'a> {
                         self.iter.next();
                         return Ok(Token(TokenKind::DollarSign, i));
                     }
-                    '\n' | '\r' | '\t' | ' ' => {
+                    '\n' | '\r' | '\t' | ' ' | ',' => {
                         self.iter.next();
                         // continue in loop
                     }
