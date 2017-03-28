@@ -97,6 +97,9 @@ impl<'a> Lexer<'a> {
                         self.iter.next();
                         return Ok(Token(TokenKind::DollarSign, i));
                     }
+                    '#' => {
+                        self.ignore_comment();
+                    }
                     '\n' | '\r' | '\t' | ' ' | ',' => {
                         self.iter.next();
                         // continue in loop
@@ -105,6 +108,15 @@ impl<'a> Lexer<'a> {
                 }
             } else {
                 return Ok(Token(TokenKind::EOF, self.src.len()));
+            }
+        }
+    }
+
+    fn ignore_comment(&mut self) {
+        // consume whole comment
+        while let Some((_, c)) = self.iter.next() {
+            if c == '\n' {
+                break;
             }
         }
     }
@@ -413,5 +425,14 @@ mod test {
 
         assert_eq!(Lexer::new("\"\\u2699\"").scan(),
                    Ok(Token(TokenKind::String("⚙".to_string()), 0)));
+    }
+
+    #[test]
+    fn comment() {
+        let mut lexer = Lexer::new(r#"{# whatever }
+}"#);
+        assert_eq!(lexer.scan(), Ok(Token(TokenKind::LeftBrace, 0)));
+        assert_eq!(lexer.scan(), Ok(Token(TokenKind::RightBrace, 14)));
+        assert_eq!(lexer.scan(), Ok(Token(TokenKind::EOF, 15)));
     }
 }
