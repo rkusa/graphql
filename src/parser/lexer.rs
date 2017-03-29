@@ -17,6 +17,8 @@ pub enum TokenKind<'a> {
     RightBrace,
     LeftParan,
     RightParan,
+    LeftBracket,
+    RightBracket,
     Colon,
     DollarSign,
     EqualSign,
@@ -84,6 +86,14 @@ impl<'a> Lexer<'a> {
                     ')' => {
                         self.iter.next();
                         return Ok(Token(TokenKind::RightParan, i));
+                    }
+                    '[' => {
+                        self.iter.next();
+                        return Ok(Token(TokenKind::LeftBracket, i));
+                    }
+                    ']' => {
+                        self.iter.next();
+                        return Ok(Token(TokenKind::RightBracket, i));
                     }
                     ':' => {
                         self.iter.next();

@@ -11,8 +11,8 @@ pub enum Value {
     String(String),
     Boolean(bool),
     Null,
-    Enum(String), // ListValue[?Const]
-                  // ObjectValue[/Const]
+    Enum(String),
+    List(Vec<Value>), // ObjectValue[/Const]
 }
 
 
@@ -264,44 +264,62 @@ impl<'a> Parser<'a> {
     }
 
     fn value(&mut self, const_only: bool) -> Result<Value, ErrorKind> {
-        // is variable
-        if let Some(&TokenKind::DollarSign) = self.peek_token() {
-            if const_only {
-                return Err(ErrorKind::UnexpectedToken);
+        match self.peek_token() {
+            // is variable
+            Some(&TokenKind::DollarSign) => {
+                if const_only {
+                    return Err(ErrorKind::UnexpectedToken);
+                }
+
+                self.next_token(); // consume dollar sign
+
+                let name = match self.next_token() {
+                    Some(TokenKind::Name(s)) => Ok(s.to_string()),
+                    Some(TokenKind::Boolean(true)) => Ok("true".to_string()),
+                    Some(TokenKind::Boolean(false)) => Ok("false".to_string()),
+                    Some(TokenKind::Null) => Ok("null".to_string()),
+                    Some(_) => Err(ErrorKind::UnexpectedToken),
+                    None => Err(ErrorKind::ExpectedToken),
+                }?;
+
+                // default value
+                if let Some(&TokenKind::EqualSign) = self.peek_token() {
+                    self.next_token(); // consume equal sign
+
+                    Ok(Value::Variable(name, Some(Box::new(self.value(true)?))))
+                } else {
+                    Ok(Value::Variable(name, None))
+                }
             }
+            // is list
+            Some(&TokenKind::LeftBracket) => {
+                self.next_token(); // consume left bracket
 
-            self.next_token(); // consume dollar sign
+                let mut list = Vec::new();
 
-            let name = match self.next_token() {
-                Some(TokenKind::Name(s)) => s.to_string(),
-                Some(TokenKind::Boolean(true)) => "true".to_string(),
-                Some(TokenKind::Boolean(false)) => "false".to_string(),
-                Some(TokenKind::Null) => "null".to_string(),
-                Some(_) | None => String::new(),
-            };
+                // TODO: vulnerable to stackoverflow attack?
+                loop {
+                    if let Some(&TokenKind::RightBracket) = self.peek_token() {
+                        self.next_token(); // consume right bracket
+                        break;
+                    } else {
+                        list.push(self.value(true)?);
+                    }
+                }
 
-            if name.len() == 0 {
-                return Err(ErrorKind::UnexpectedToken);
+                Ok(Value::List(list))
             }
-
-            // default value
-            if let Some(&TokenKind::EqualSign) = self.peek_token() {
-                self.next_token(); // consume equal sign
-
-                Ok(Value::Variable(name, Some(Box::new(self.value(true)?))))
-            } else {
-                Ok(Value::Variable(name, None))
-            }
-        } else {
-            match self.next_token() {
-                Some(TokenKind::String(s)) => Ok(Value::String(s)),
-                Some(TokenKind::Int(i)) => Ok(Value::Int(i)),
-                Some(TokenKind::Float(f)) => Ok(Value::Float(f)),
-                Some(TokenKind::Boolean(b)) => Ok(Value::Boolean(b)),
-                Some(TokenKind::Null) => Ok(Value::Null),
-                Some(TokenKind::Name(s)) => Ok(Value::Enum(s.to_string())),
-                Some(_) => Err(ErrorKind::UnexpectedToken),
-                None => Err(ErrorKind::ExpectedToken),
+            _ => {
+                match self.next_token() {
+                    Some(TokenKind::String(s)) => Ok(Value::String(s)),
+                    Some(TokenKind::Int(i)) => Ok(Value::Int(i)),
+                    Some(TokenKind::Float(f)) => Ok(Value::Float(f)),
+                    Some(TokenKind::Boolean(b)) => Ok(Value::Boolean(b)),
+                    Some(TokenKind::Null) => Ok(Value::Null),
+                    Some(TokenKind::Name(s)) => Ok(Value::Enum(s.to_string())),
+                    Some(_) => Err(ErrorKind::UnexpectedToken),
+                    None => Err(ErrorKind::ExpectedToken),
+                }
             }
         }
     }
@@ -496,5 +514,25 @@ mod test {
         assert_eq!(parse("{user (id: $foo = \"bar\")}"), Ok(expected));
         assert_eq!(parse("{user (id: $foo = $bar)}"),
                    Err(ParserError(ErrorKind::UnexpectedToken, 18)));
+    }
+
+    #[test]
+    fn argument_list() {
+        let expected = SelectionSet {
+            fields: vec![Field {
+                             name: "update".to_string(),
+                             alias: None,
+                             arguments: Some(vec![("data".to_string(),
+                                                   Value::List(vec![
+                                Value::Int(42),
+                                Value::String("foobar".to_string()),
+                                Value::Boolean(true)]))]),
+                             selection_set: None,
+                         }],
+        };
+        assert_eq!(parse("{update (data: [ 42, \"foobar\" true ] )}"),
+                   Ok(expected));
+        assert_eq!(parse("{update (data: [ $var] )}"),
+                   Err(ParserError(ErrorKind::UnexpectedToken, 17)));
     }
 }
