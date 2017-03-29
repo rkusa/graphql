@@ -15,6 +15,29 @@ pub enum Value {
     List(Vec<Value>), // ObjectValue[/Const]
 }
 
+impl From<i32> for Value {
+    fn from(i: i32) -> Value {
+        Value::Int(i)
+    }
+}
+
+impl From<f32> for Value {
+    fn from(f: f32) -> Value {
+        Value::Float(f)
+    }
+}
+
+impl From<bool> for Value {
+    fn from(b: bool) -> Value {
+        Value::Boolean(b)
+    }
+}
+
+impl From<String> for Value {
+    fn from(s: String) -> Value {
+        Value::String(s)
+    }
+}
 
 #[derive(PartialEq, Debug)]
 pub struct Field {
@@ -351,6 +374,12 @@ mod test {
         }
     }
 
+    fn arg<V>(name: &str, value: V) -> (String, Value)
+        where V: Into<Value>
+    {
+        (name.to_string(), value.into())
+    }
+
     #[test]
     fn ignore_unicode_bom() {
         assert_eq!(parse("\u{FEFF}{}"), Ok(SelectionSet { fields: vec![] }));
@@ -398,7 +427,7 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![("id".to_string(), Value::Int(42))]),
+                             arguments: Some(vec![arg("id", 42)]),
                              selection_set: Some(SelectionSet { fields: vec![new_field("name")] }),
                          }],
         };
@@ -411,7 +440,7 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![("id".to_string(), Value::Boolean(true))]),
+                             arguments: Some(vec![arg("id", true)]),
                              selection_set: None,
                          }],
         };
@@ -420,7 +449,7 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![("id".to_string(), Value::Boolean(false))]),
+                             arguments: Some(vec![arg("id", false)]),
                              selection_set: None,
                          }],
         };
@@ -433,7 +462,7 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![("id".to_string(), Value::Null)]),
+                             arguments: Some(vec![arg("id", Value::Null)]),
                              selection_set: None,
                          }],
         };
@@ -446,8 +475,7 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![("id".to_string(),
-                                                   Value::Enum("whatever".to_string()))]),
+                             arguments: Some(vec![arg("id", Value::Enum("whatever".to_string()))]),
                              selection_set: None,
                          }],
         };
@@ -460,8 +488,9 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![("id".to_string(),
-                                                   Value::Variable("variable".to_string(), None))]),
+                             arguments: Some(vec![arg("id",
+                                                      Value::Variable("variable".to_string(),
+                                                                      None))]),
                              selection_set: None,
                          }],
         };
@@ -470,8 +499,8 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![("id".to_string(),
-                                                   Value::Variable("true".to_string(), None))]),
+                             arguments: Some(vec![arg("id",
+                                                      Value::Variable("true".to_string(), None))]),
                              selection_set: None,
                          }],
         };
@@ -480,8 +509,8 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![("id".to_string(),
-                                                   Value::Variable("false".to_string(), None))]),
+                             arguments: Some(vec![arg("id",
+                                                      Value::Variable("false".to_string(), None))]),
                              selection_set: None,
                          }],
         };
@@ -490,8 +519,8 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![("id".to_string(),
-                                                   Value::Variable("null".to_string(), None))]),
+                             arguments: Some(vec![arg("id",
+                                                      Value::Variable("null".to_string(), None))]),
                              selection_set: None,
                          }],
         };
@@ -505,7 +534,7 @@ mod test {
                              name: "user".to_string(),
                              alias: None,
                              arguments: Some(vec![
-                ("id".to_string(),
+                arg("id",
                     Value::Variable("foo".to_string(),
                         Some(Box::new(Value::String("bar".to_string())))))]),
                              selection_set: None,
@@ -522,8 +551,8 @@ mod test {
             fields: vec![Field {
                              name: "update".to_string(),
                              alias: None,
-                             arguments: Some(vec![("data".to_string(),
-                                                   Value::List(vec![
+                             arguments: Some(vec![arg("data",
+                                                      Value::List(vec![
                                 Value::Int(42),
                                 Value::String("foobar".to_string()),
                                 Value::Boolean(true)]))]),
