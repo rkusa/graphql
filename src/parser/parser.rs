@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use super::lexer::{Lexer, TokenKind, LexerError};
 use {Resolvable, Resolve, ResolveError};
 use resolve::resolve;
@@ -12,7 +14,8 @@ pub enum Value {
     Boolean(bool),
     Null,
     Enum(String),
-    List(Vec<Value>), // ObjectValue[/Const]
+    List(Vec<Value>),
+    Object(HashMap<String, Value>),
 }
 
 impl From<i32> for Value {
@@ -36,6 +39,12 @@ impl From<bool> for Value {
 impl From<String> for Value {
     fn from(s: String) -> Value {
         Value::String(s)
+    }
+}
+
+impl<'a> From<&'a str> for Value {
+    fn from(s: &'a str) -> Value {
+        Value::String(s.to_string())
     }
 }
 
@@ -332,6 +341,28 @@ impl<'a> Parser<'a> {
 
                 Ok(Value::List(list))
             }
+            // is object
+            Some(&TokenKind::LeftBrace) => {
+                self.next_token(); // consume left brace
+
+                let mut obj = HashMap::new();
+
+                loop {
+                    match self.next_token() {
+                        Some(TokenKind::RightBrace) => break,
+                        Some(TokenKind::Name(name)) => {
+                            self.expect(TokenKind::Colon)?;
+
+                            let value = self.value(true)?;
+                            obj.insert(name.to_string(), value);
+                        }
+                        Some(_) => return Err(ErrorKind::UnexpectedToken),
+                        None => return Err(ErrorKind::InvalidQuery),
+                    }
+                }
+
+                Ok(Value::Object(obj))
+            }
             _ => {
                 match self.next_token() {
                     Some(TokenKind::String(s)) => Ok(Value::String(s)),
@@ -562,6 +593,42 @@ mod test {
         assert_eq!(parse("{update (data: [ 42, \"foobar\" true ] )}"),
                    Ok(expected));
         assert_eq!(parse("{update (data: [ $var] )}"),
+                   Err(ParserError(ErrorKind::UnexpectedToken, 17)));
+    }
+
+    #[test]
+    fn argument_object() {
+        let mut expected = SelectionSet {
+            fields: vec![Field {
+                             name: "update".to_string(),
+                             alias: None,
+                             arguments: Some(vec![arg("data", Value::Object(HashMap::new()))]),
+                             selection_set: None,
+                         }],
+        };
+
+        assert_eq!(parse("{update (data: { } )}"), Ok(expected));
+
+        let mut obj = HashMap::new();
+        obj.insert("s".into(), "foobar".into());
+        obj.insert("i".into(), 42.into());
+        expected = SelectionSet {
+            fields: vec![Field {
+                             name: "update".to_string(),
+                             alias: None,
+                             arguments: Some(vec![arg("data", Value::Object(obj))]),
+                             selection_set: None,
+                         }],
+        };
+
+        assert_eq!(parse("{update (data: { s: \"foobar\", i: 42 } )}"),
+                   Ok(expected));
+
+        assert_eq!(parse("{update (data: { v: $var } )}"),
+                   Err(ParserError(ErrorKind::UnexpectedToken, 20)));
+        assert_eq!(parse("{update (data: { )}"),
+                   Err(ParserError(ErrorKind::UnexpectedToken, 17)));
+        assert_eq!(parse("{update (data: {}"),
                    Err(ParserError(ErrorKind::UnexpectedToken, 17)));
     }
 }
