@@ -6,10 +6,11 @@ extern crate futures;
 extern crate tokio_service;
 extern crate hyper;
 extern crate core;
+extern crate ctx;
 
 pub mod service;
 pub mod parser;
 mod resolve;
 
-pub use parser::{Field, parse};
-pub use resolve::{Resolvable, Resolve, ResolveError, Value};
+pub use parser::{Field, parse, Value as ParserValue};
+pub use resolve::{Resolvable, Resolve, ResolveError, Value, resolve};

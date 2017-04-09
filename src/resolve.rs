@@ -3,10 +3,11 @@ use std::{fmt, str, error};
 use futures::{future, Future, BoxFuture};
 use parser::{SelectionSet, Field};
 use serde::ser::{Serialize, Serializer, SerializeMap};
-use serde_json::{Number};
+use serde_json::Number;
+use ctx::Context;
 
 pub trait Resolvable {
-    fn resolve(&self, field: &Field) -> Option<Resolve>;
+    fn resolve<C: Context>(&self, ctx: &C, field: &Field) -> Option<Resolve>;
 }
 
 pub enum Resolve {
@@ -64,7 +65,7 @@ impl Serialize for Value {
                     map.serialize_entry(&kv.0, &kv.1)?;
                 }
                 map.end()
-            },
+            }
         }
     }
 }
@@ -78,10 +79,8 @@ pub enum ResolveError {
 impl fmt::Display for ResolveError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            ResolveError::InvalidField(ref name) =>
-                write!(f, "Cannot query field {}", name),
-            ResolveError::NoSubFields =>
-                write!(f, "Field does not have subfields",),
+            ResolveError::InvalidField(ref name) => write!(f, "Cannot query field {}", name),
+            ResolveError::NoSubFields => write!(f, "Field does not have subfields",),
         }
     }
 }
@@ -95,8 +94,12 @@ impl error::Error for ResolveError {
     }
 }
 
-pub fn resolve<T>(selection_set: &SelectionSet, root: &T) -> BoxFuture<Value, ResolveError>
-    where T: Resolvable
+pub fn resolve<T, C>(ctx: &C,
+                     selection_set: &SelectionSet,
+                     root: &T)
+                     -> BoxFuture<Value, ResolveError>
+    where T: Resolvable,
+          C: Context
 {
     // NOTICE: the following could not be used:
     //      future::join_all(selection_set.fields.iter().map(|field| { ... }))
@@ -111,23 +114,23 @@ pub fn resolve<T>(selection_set: &SelectionSet, root: &T) -> BoxFuture<Value, Re
             None => field.name.clone(),
         };
 
-        match root.resolve(&field) {
+        match root.resolve(ctx, &field) {
             Some(Resolve::Now(val)) => obj.push((field_name, val)),
             Some(Resolve::Async(fut)) => {
                 let i = obj.len();
                 obj.push((field_name, Value::Null));
-                fs.push(fut.map(move |val| {
-                    (i, val)
-                }))
-            },
+                fs.push(fut.map(move |val| (i, val)))
+            }
             None => return future::err(ResolveError::InvalidField(field_name)).boxed(),
         }
     }
 
-    future::join_all(fs).map(|values| {
-        for value in values {
-            obj[value.0].1 = value.1
-        };
-        Value::Object(obj)
-    }).boxed()
+    future::join_all(fs)
+        .map(|values| {
+                 for value in values {
+                     obj[value.0].1 = value.1
+                 }
+                 Value::Object(obj)
+             })
+        .boxed()
 }

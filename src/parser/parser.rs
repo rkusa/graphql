@@ -4,6 +4,7 @@ use super::lexer::{Lexer, TokenKind, LexerError};
 use {Resolvable, Resolve, ResolveError};
 use resolve::resolve;
 use futures::{future, Future};
+use ctx::Context;
 
 #[derive(PartialEq, Debug)]
 pub enum Value {
@@ -52,16 +53,17 @@ impl<'a> From<&'a str> for Value {
 pub struct Field {
     pub alias: Option<String>,
     pub name: String,
-    pub arguments: Option<Vec<(String, Value)>>,
+    pub arguments: Option<HashMap<String, Value>>,
     selection_set: Option<SelectionSet>,
 }
 
 impl Field {
-    pub fn resolve<T>(&self, obj: &T) -> Option<Resolve>
-        where T: Resolvable
+    pub fn resolve<T, C>(&self, ctx: &C, obj: &T) -> Option<Resolve>
+        where T: Resolvable,
+              C: Context
     {
         match self.selection_set {
-            Some(ref selection_set) => Some(Resolve::Async(resolve(&selection_set, obj))),
+            Some(ref selection_set) => Some(Resolve::Async(resolve(ctx, &selection_set, obj))),
             None => Some(Resolve::Async(future::err(ResolveError::NoSubFields).boxed())),
         }
     }
@@ -254,16 +256,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn arguments(&mut self) -> Result<Option<Vec<(String, Value)>>, ErrorKind> {
+    fn arguments(&mut self) -> Result<Option<HashMap<String, Value>>, ErrorKind> {
         // "(" (Name : Value)+ ")"
 
         if let Some(&TokenKind::LeftParan) = self.peek_token() {
             self.next_token(); // consume left parent
 
-            let mut arguments = vec![];
+            let mut arguments = HashMap::new();
             loop {
                 match self.argument() {
-                    Ok(Some(argument)) => arguments.push(argument),
+                    Ok(Some((k, v))) => {arguments.insert(k, v);},
                     Ok(None) => break,
                     Err(err) => return Err(err),
                 }
@@ -405,10 +407,12 @@ mod test {
         }
     }
 
-    fn arg<V>(name: &str, value: V) -> (String, Value)
+    fn arg<V>(name: &str, value: V) -> HashMap<String, Value>
         where V: Into<Value>
     {
-        (name.to_string(), value.into())
+        let mut map = HashMap::new();
+        map.insert(name.to_string(), value.into());
+        map
     }
 
     #[test]
@@ -458,7 +462,7 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![arg("id", 42)]),
+                             arguments: Some(arg("id", 42)),
                              selection_set: Some(SelectionSet { fields: vec![new_field("name")] }),
                          }],
         };
@@ -471,7 +475,7 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![arg("id", true)]),
+                             arguments: Some(arg("id", true)),
                              selection_set: None,
                          }],
         };
@@ -480,7 +484,7 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![arg("id", false)]),
+                             arguments: Some(arg("id", false)),
                              selection_set: None,
                          }],
         };
@@ -493,7 +497,7 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![arg("id", Value::Null)]),
+                             arguments: Some(arg("id", Value::Null)),
                              selection_set: None,
                          }],
         };
@@ -506,7 +510,7 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![arg("id", Value::Enum("whatever".to_string()))]),
+                             arguments: Some(arg("id", Value::Enum("whatever".to_string()))),
                              selection_set: None,
                          }],
         };
@@ -519,9 +523,9 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![arg("id",
+                             arguments: Some(arg("id",
                                                       Value::Variable("variable".to_string(),
-                                                                      None))]),
+                                                                      None))),
                              selection_set: None,
                          }],
         };
@@ -530,8 +534,8 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![arg("id",
-                                                      Value::Variable("true".to_string(), None))]),
+                             arguments: Some(arg("id",
+                                                      Value::Variable("true".to_string(), None))),
                              selection_set: None,
                          }],
         };
@@ -540,8 +544,8 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![arg("id",
-                                                      Value::Variable("false".to_string(), None))]),
+                             arguments: Some(arg("id",
+                                                      Value::Variable("false".to_string(), None))),
                              selection_set: None,
                          }],
         };
@@ -550,8 +554,8 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![arg("id",
-                                                      Value::Variable("null".to_string(), None))]),
+                             arguments: Some(arg("id",
+                                                      Value::Variable("null".to_string(), None))),
                              selection_set: None,
                          }],
         };
@@ -564,10 +568,10 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(vec![
+                             arguments: Some(
                 arg("id",
                     Value::Variable("foo".to_string(),
-                        Some(Box::new(Value::String("bar".to_string())))))]),
+                        Some(Box::new(Value::String("bar".to_string())))))),
                              selection_set: None,
                          }],
         };
@@ -582,11 +586,11 @@ mod test {
             fields: vec![Field {
                              name: "update".to_string(),
                              alias: None,
-                             arguments: Some(vec![arg("data",
+                             arguments: Some(arg("data",
                                                       Value::List(vec![
                                 Value::Int(42),
                                 Value::String("foobar".to_string()),
-                                Value::Boolean(true)]))]),
+                                Value::Boolean(true)]))),
                              selection_set: None,
                          }],
         };
@@ -602,7 +606,7 @@ mod test {
             fields: vec![Field {
                              name: "update".to_string(),
                              alias: None,
-                             arguments: Some(vec![arg("data", Value::Object(HashMap::new()))]),
+                             arguments: Some(arg("data", Value::Object(HashMap::new()))),
                              selection_set: None,
                          }],
         };
@@ -616,7 +620,7 @@ mod test {
             fields: vec![Field {
                              name: "update".to_string(),
                              alias: None,
-                             arguments: Some(vec![arg("data", Value::Object(obj))]),
+                             arguments: Some(arg("data", Value::Object(obj))),
                              selection_set: None,
                          }],
         };

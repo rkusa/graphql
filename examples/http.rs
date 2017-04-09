@@ -1,12 +1,10 @@
 extern crate hyper;
-extern crate serde_json;
-extern crate futures;
 extern crate graphql;
-extern crate futures_cpupool;
+extern crate ctx;
 
 use hyper::server::Http;
 use graphql::{Resolvable, Field, Resolve};
-// use futures::{future, Future, BoxFuture};
+use ctx::Context;
 
 struct User {
     id: i32,
@@ -14,7 +12,7 @@ struct User {
 }
 
 impl Resolvable for User {
-    fn resolve(&self, field: &Field) -> Option<Resolve> {
+    fn resolve<C: Context>(&self, _ctx: &C, field: &Field) -> Option<Resolve> {
         match field.name.as_ref() {
             "id" => Some(self.id.into()),
             "name" => Some(self.name.to_string().into()),
@@ -26,14 +24,14 @@ impl Resolvable for User {
 struct Root;
 
 impl Resolvable for Root {
-    fn resolve(&self, field: &Field) -> Option<Resolve> {
+    fn resolve<C: Context>(&self, ctx: &C, field: &Field) -> Option<Resolve> {
         match field.name.as_ref() {
             "user" => {
                 let user = User {
                     id: 42,
                     name: "Markus".to_string(),
                 };
-                field.resolve(&user)
+                field.resolve(ctx, &user)
             }
             _ => None,
         }
