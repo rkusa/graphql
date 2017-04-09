@@ -1,15 +1,13 @@
-use std::{io, clone, error, fmt};
-use std::sync::{Arc, Mutex};
-
+use std::{io, error, fmt};
 use hyper;
 use hyper::status::StatusCode;
 use hyper::header::{ContentType, ContentLength};
 use hyper::server::{Service, NewService, Request, Response};
-use futures::{future, Future, BoxFuture, Stream};
+use futures::{future, Future, Stream};
 use serde_json;
-use {Resolvable, Resolve, Field, parser};
+use {Resolvable, parser};
 use resolve::resolve;
-use ctx::{self, Context};
+use ctx;
 
 #[derive(Debug)]
 pub enum Error {
@@ -43,40 +41,23 @@ struct PostQuery {
     // variables
 }
 
-struct Root<R>(Arc<Mutex<R>>) where R: Resolvable + Send + 'static;
-
-impl<R> Resolvable for Root<R>
-    where R: Resolvable + Send + 'static
-{
-    fn resolve<C: Context>(&self, ctx: &C, field: &Field) -> Option<Resolve> {
-        let root = self.0.lock().unwrap();
-        root.resolve(ctx, field)
-    }
-}
-
-impl<R> clone::Clone for Root<R>
-    where R: Resolvable + Send + 'static
-{
-    fn clone(&self) -> Self {
-        Root(self.0.clone())
-    }
-}
-
 pub struct GraphQL<R>
-    where R: Resolvable + Send + 'static
+    where R: Resolvable + Clone + 'static
 {
-    root: Root<R>,
+    root: R,
 }
 
 impl<R> GraphQL<R>
-    where R: Resolvable + Send + 'static
+    where R: Resolvable + Clone + 'static
 {
     pub fn new(root: R) -> Self {
-        return GraphQL { root: Root(Arc::new(Mutex::new(root))) };
+        return GraphQL { root: root };
     }
 }
 
-fn handle_graphql_request<T>(buffer: &Vec<u8>, root: T) -> BoxFuture<Response, Error>
+fn handle_graphql_request<T>(buffer: &Vec<u8>,
+                             root: T)
+                             -> Box<Future<Item = Response, Error = Error>>
     where T: Resolvable
 {
     let result = serde_json::from_slice::<PostQuery>(&buffer)
@@ -88,7 +69,7 @@ fn handle_graphql_request<T>(buffer: &Vec<u8>, root: T) -> BoxFuture<Response, E
                                                           })
 
                       .map(|ss| {
-                          resolve(&ctx::background(), &ss, &root)
+                          let result = resolve(ctx::background(), ss, &root)
                               .map_err(|_| Error::BadRequest("failed resolving query".to_string()))
                               .and_then(|result| {
                                             serde_json::to_string_pretty(&result)
@@ -102,10 +83,10 @@ fn handle_graphql_request<T>(buffer: &Vec<u8>, root: T) -> BoxFuture<Response, E
                                       .with_header(ContentType::json())
                                       .with_body(buffer)
 
-                              })
-                              .boxed()
-                      })
+                              });
 
+                           Box::new(result)
+                      })
                   });
 
     match result {
@@ -115,12 +96,12 @@ fn handle_graphql_request<T>(buffer: &Vec<u8>, root: T) -> BoxFuture<Response, E
 }
 
 impl<R> Service for GraphQL<R>
-    where R: Resolvable + Send + 'static
+    where R: Resolvable + Clone + 'static
 {
     type Request = Request;
     type Response = Response;
     type Error = hyper::Error;
-    type Future = BoxFuture<Self::Response, Self::Error>;
+    type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
 
     fn call(&self, req: Self::Request) -> Self::Future {
         let root = self.root.clone();
@@ -136,7 +117,7 @@ impl<R> Service for GraphQL<R>
             return future::finished(res).boxed();
         }
 
-        body.fold(vec![], |mut body, chunk| {
+        let resp = body.fold(vec![], |mut body, chunk| {
                 body.extend_from_slice(&chunk);
                 Ok::<_, hyper::Error>(body)
             })
@@ -151,13 +132,14 @@ impl<R> Service for GraphQL<R>
                     };
                     future::ok(res)
                 })
-            })
-            .boxed()
+            });
+
+        Box::new(resp)
     }
 }
 
 impl<R> NewService for GraphQL<R>
-    where R: Resolvable + Send + 'static
+    where R: Resolvable + Clone + 'static
 {
     type Request = Request;
     type Response = Response;
@@ -165,6 +147,6 @@ impl<R> NewService for GraphQL<R>
     type Instance = GraphQL<R>;
 
     fn new_service(&self) -> Result<Self::Instance, io::Error> {
-        Ok(GraphQL { root: Root(self.root.0.clone()) })
+        Ok(GraphQL { root: self.root.clone() })
     }
 }

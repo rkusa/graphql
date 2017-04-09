@@ -1,18 +1,18 @@
 use std::{fmt, str, error};
 
-use futures::{future, Future, BoxFuture};
+use futures::{future, Future};
 use parser::{SelectionSet, Field};
 use serde::ser::{Serialize, Serializer, SerializeMap};
 use serde_json::Number;
 use ctx::Context;
 
 pub trait Resolvable {
-    fn resolve<C: Context>(&self, ctx: &C, field: &Field) -> Option<Resolve>;
+    fn resolve(&self, ctx: Context, field: Field) -> Option<Resolve>;
 }
 
 pub enum Resolve {
     Now(Value),
-    Async(BoxFuture<Value, ResolveError>),
+    Async(Box<Future<Item = Value, Error = ResolveError>>),
 }
 
 impl From<i32> for Resolve {
@@ -94,12 +94,11 @@ impl error::Error for ResolveError {
     }
 }
 
-pub fn resolve<T, C>(ctx: &C,
-                     selection_set: &SelectionSet,
-                     root: &T)
-                     -> BoxFuture<Value, ResolveError>
-    where T: Resolvable,
-          C: Context
+pub fn resolve<T>(ctx: Context,
+                  selection_set: SelectionSet,
+                  root: &T)
+                  -> Box<Future<Item = Value, Error = ResolveError>>
+    where T: Resolvable
 {
     // NOTICE: the following could not be used:
     //      future::join_all(selection_set.fields.iter().map(|field| { ... }))
@@ -108,13 +107,14 @@ pub fn resolve<T, C>(ctx: &C,
     let mut fs = Vec::new();
     let mut obj = Vec::new();
 
-    for field in &selection_set.fields {
+    // while let Some(field) = sele
+    for field in selection_set.fields {
         let field_name = match field.alias {
             Some(ref alias) => alias.clone(),
             None => field.name.clone(),
         };
 
-        match root.resolve(ctx, &field) {
+        match root.resolve(ctx.clone(), field) {
             Some(Resolve::Now(val)) => obj.push((field_name, val)),
             Some(Resolve::Async(fut)) => {
                 let i = obj.len();
@@ -125,12 +125,12 @@ pub fn resolve<T, C>(ctx: &C,
         }
     }
 
-    future::join_all(fs)
-        .map(|values| {
-                 for value in values {
-                     obj[value.0].1 = value.1
-                 }
-                 Value::Object(obj)
-             })
-        .boxed()
+    let fut = future::join_all(fs).map(|values| {
+                                           for value in values {
+                                               obj[value.0].1 = value.1
+                                           }
+                                           Value::Object(obj)
+                                       });
+
+    Box::new(fut)
 }

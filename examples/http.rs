@@ -12,7 +12,7 @@ struct User {
 }
 
 impl Resolvable for User {
-    fn resolve<C: Context>(&self, _ctx: &C, field: &Field) -> Option<Resolve> {
+    fn resolve(&self, _ctx: Context, field: Field) -> Option<Resolve> {
         match field.name.as_ref() {
             "id" => Some(self.id.into()),
             "name" => Some(self.name.to_string().into()),
@@ -21,10 +21,11 @@ impl Resolvable for User {
     }
 }
 
+#[derive(Clone)]
 struct Root;
 
 impl Resolvable for Root {
-    fn resolve<C: Context>(&self, ctx: &C, field: &Field) -> Option<Resolve> {
+    fn resolve(&self, ctx: Context, mut field: Field) -> Option<Resolve> {
         match field.name.as_ref() {
             "user" => {
                 let user = User {

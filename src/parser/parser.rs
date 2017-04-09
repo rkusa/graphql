@@ -58,12 +58,11 @@ pub struct Field {
 }
 
 impl Field {
-    pub fn resolve<T, C>(&self, ctx: &C, obj: &T) -> Option<Resolve>
-        where T: Resolvable,
-              C: Context
+    pub fn resolve<T>(&mut self, ctx: Context, obj: &T) -> Option<Resolve>
+        where T: Resolvable
     {
-        match self.selection_set {
-            Some(ref selection_set) => Some(Resolve::Async(resolve(ctx, &selection_set, obj))),
+        match self.selection_set.take() {
+            Some(selection_set) => Some(Resolve::Async(resolve(ctx, selection_set, obj))),
             None => Some(Resolve::Async(future::err(ResolveError::NoSubFields).boxed())),
         }
     }
@@ -265,7 +264,9 @@ impl<'a> Parser<'a> {
             let mut arguments = HashMap::new();
             loop {
                 match self.argument() {
-                    Ok(Some((k, v))) => {arguments.insert(k, v);},
+                    Ok(Some((k, v))) => {
+                        arguments.insert(k, v);
+                    }
                     Ok(None) => break,
                     Err(err) => return Err(err),
                 }
@@ -524,8 +525,7 @@ mod test {
                              name: "user".to_string(),
                              alias: None,
                              arguments: Some(arg("id",
-                                                      Value::Variable("variable".to_string(),
-                                                                      None))),
+                                                 Value::Variable("variable".to_string(), None))),
                              selection_set: None,
                          }],
         };
@@ -534,8 +534,7 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(arg("id",
-                                                      Value::Variable("true".to_string(), None))),
+                             arguments: Some(arg("id", Value::Variable("true".to_string(), None))),
                              selection_set: None,
                          }],
         };
@@ -544,8 +543,7 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(arg("id",
-                                                      Value::Variable("false".to_string(), None))),
+                             arguments: Some(arg("id", Value::Variable("false".to_string(), None))),
                              selection_set: None,
                          }],
         };
@@ -554,8 +552,7 @@ mod test {
             fields: vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(arg("id",
-                                                      Value::Variable("null".to_string(), None))),
+                             arguments: Some(arg("id", Value::Variable("null".to_string(), None))),
                              selection_set: None,
                          }],
         };
@@ -587,7 +584,7 @@ mod test {
                              name: "update".to_string(),
                              alias: None,
                              arguments: Some(arg("data",
-                                                      Value::List(vec![
+                                                 Value::List(vec![
                                 Value::Int(42),
                                 Value::String("foobar".to_string()),
                                 Value::Boolean(true)]))),
