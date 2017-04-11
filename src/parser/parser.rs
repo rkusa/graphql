@@ -1,10 +1,6 @@
 use std::collections::HashMap;
 
 use super::lexer::{Lexer, TokenKind, LexerError};
-use {Resolvable, Resolve, ResolveError};
-use resolve::resolve;
-use futures::{future, Future};
-use ctx::Context;
 
 #[derive(PartialEq, Debug)]
 pub enum Value {
@@ -22,6 +18,16 @@ pub enum Value {
 impl From<i32> for Value {
     fn from(i: i32) -> Value {
         Value::Int(i)
+    }
+}
+
+impl<'a> Into<Option<i32>> for &'a Value {
+    fn into(self) -> Option<i32> {
+        if let &Value::Int(i) = self {
+            Some(i)
+        } else {
+            None
+        }
     }
 }
 
@@ -54,18 +60,7 @@ pub struct Field {
     pub alias: Option<String>,
     pub name: String,
     pub arguments: Option<HashMap<String, Value>>,
-    selection_set: Option<SelectionSet>,
-}
-
-impl Field {
-    pub fn resolve<T>(&mut self, ctx: Context, obj: &T) -> Option<Resolve>
-        where T: Resolvable
-    {
-        match self.selection_set.take() {
-            Some(selection_set) => Some(Resolve::Async(resolve(ctx, selection_set, obj))),
-            None => Some(Resolve::Async(future::err(ResolveError::NoSubFields).boxed())),
-        }
-    }
+    pub selection_set: Option<SelectionSet>,
 }
 
 #[derive(PartialEq, Debug)]
@@ -414,6 +409,13 @@ mod test {
         let mut map = HashMap::new();
         map.insert(name.to_string(), value.into());
         map
+    }
+
+    #[test]
+    fn value_into() {
+        let val = &Value::Int(42);
+        let opt : Option<i32> = val.into();
+        assert_eq!(opt, Some(42));
     }
 
     #[test]

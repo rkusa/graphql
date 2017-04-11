@@ -1,29 +1,134 @@
 use std::{fmt, str, error};
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::cell::RefCell;
 
-use futures::{future, Future};
-use parser::{SelectionSet, Field};
+use futures::{future, Future, Stream};
+use parser::{SelectionSet, Field, Value as ParserValue};
 use serde::ser::{Serialize, Serializer, SerializeMap};
 use serde_json::Number;
 use ctx::Context;
 
 pub trait Resolvable {
-    fn resolve(&self, ctx: Context, field: Field) -> Option<Resolve>;
+    fn resolve(&self, r: Resolve, name: &str, args: Arguments) -> Option<ResolveResult>;
 }
 
-pub enum Resolve {
+pub struct Arguments<'a>(Option<&'a HashMap<String, ParserValue>>);
+
+impl<'a> Arguments<'a> {
+    pub fn get<T>(&self, name: &str) -> Option<T>
+        where &'a ParserValue: Into<Option<T>>
+    {
+        self.0.and_then(|m| m.get(name).and_then(|v| v.into()))
+    }
+}
+
+pub struct Resolve {
+    ctx: Context,
+    fields: Option<Rc<RefCell<Vec<Field>>>>,
+}
+
+impl Resolve {
+    pub fn value<T>(&self, val: T) -> Option<ResolveResult>
+        where T: Into<Value>
+    {
+        Some(ResolveResult::Now(val.into()))
+    }
+
+    pub fn context(&self) -> &Context {
+        &self.ctx
+    }
+
+    pub fn resolve<T, R>(&self, val: T) -> Option<ResolveResult>
+        where T: Into<IntermediateResult<R>>,
+              R: Resolvable + 'static
+    {
+        Some(ResolveResult::Async(match self.fields {
+                                      Some(ref fields) => {
+                                          val.into().resolve(self.ctx.clone(), fields.clone())
+                                      }
+                                      None => future::err(ResolveError::NoSubFields).boxed(),
+                                  }))
+    }
+
+    pub fn future<F, R, I>(&self, fut: F) -> Option<ResolveResult>
+        where F: Future<Item = I, Error = ResolveError> + 'static,
+              R: Resolvable + 'static,
+              I: Into<IntermediateResult<R>>
+    {
+        Some(ResolveResult::Async(match self.fields {
+            Some(ref fields) => {
+                let ctx = self.ctx.clone();
+                let fields = fields.clone();
+                Box::new(fut.map(move |obj| obj.into().resolve(ctx, fields))
+                             .flatten())
+            }
+            None => future::err(ResolveError::NoSubFields).boxed(),
+        }))
+    }
+
+    pub fn stream<S, R>(&self, stream: S) -> Option<ResolveResult>
+        where S: Stream<Item = R, Error = ResolveError> + 'static,
+              R: Resolvable + 'static
+    {
+        match self.fields {
+            Some(ref fields) => {
+                let ctx = self.ctx.clone();
+                let fields = fields.clone();
+                let resolve = stream
+                    .map(move |obj| resolve_inner(ctx.clone(), fields.clone(), &obj))
+                    .collect()
+                    .and_then(|fs| future::join_all(fs).map(Value::Array));
+                Some(ResolveResult::Async(Box::new(resolve)))
+            }
+            None => Some(ResolveResult::Async(future::err(ResolveError::NoSubFields).boxed())),
+        }
+    }
+}
+
+pub enum ResolveResult {
     Now(Value),
     Async(Box<Future<Item = Value, Error = ResolveError>>),
 }
 
-impl From<i32> for Resolve {
-    fn from(i: i32) -> Resolve {
-        Resolve::Now(i.into())
+pub enum IntermediateResult<T: Resolvable> {
+    Resolvable(T),
+    Vec(Vec<T>),
+}
+
+impl<T> IntermediateResult<T>
+    where T: Resolvable + 'static
+{
+    fn resolve(self,
+               ctx: Context,
+               fields: Rc<RefCell<Vec<Field>>>)
+               -> Box<Future<Item = Value, Error = ResolveError>> {
+        match self {
+            IntermediateResult::Resolvable(ref obj) => resolve_inner(ctx, fields, obj),
+            IntermediateResult::Vec(vec) => {
+                let fs = vec.into_iter().map(move |obj| {
+                    resolve_inner(ctx.clone(), fields.clone(), &obj)
+                });
+                let resolve = future::join_all(fs).map(Value::Array);
+                Box::new(resolve)
+            }
+        }
     }
 }
 
-impl From<String> for Resolve {
-    fn from(s: String) -> Resolve {
-        Resolve::Now(s.into())
+impl<T> From<T> for IntermediateResult<T>
+    where T: Resolvable
+{
+    fn from(r: T) -> IntermediateResult<T> {
+        IntermediateResult::Resolvable(r)
+    }
+}
+
+impl<T> From<Vec<T>> for IntermediateResult<T>
+    where T: Resolvable
+{
+    fn from(vec: Vec<T>) -> IntermediateResult<T> {
+        IntermediateResult::Vec(vec)
     }
 }
 
@@ -33,7 +138,7 @@ pub enum Value {
     // Bool(bool),
     Number(Number),
     String(String),
-    // Array(Vec<Value>),
+    Array(Vec<Value>),
 
     // a vector is used to preserve order of insertion (order of fields in the query)
     Object(Vec<(String, Value)>),
@@ -51,6 +156,12 @@ impl From<String> for Value {
     }
 }
 
+impl<'a> From<&'a String> for Value {
+    fn from(s: &'a String) -> Value {
+        Value::String(s.clone())
+    }
+}
+
 impl Serialize for Value {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where S: Serializer
@@ -59,6 +170,7 @@ impl Serialize for Value {
             Value::Null => serializer.serialize_none(),
             Value::Number(ref nr) => nr.serialize(serializer),
             Value::String(ref s) => serializer.serialize_str(&s),
+            Value::Array(ref arr) => serializer.collect_seq(arr),
             Value::Object(ref obj) => {
                 let mut map = serializer.serialize_map(Some(obj.len()))?;
                 for kv in obj {
@@ -94,10 +206,20 @@ impl error::Error for ResolveError {
     }
 }
 
+
 pub fn resolve<T>(ctx: Context,
                   selection_set: SelectionSet,
                   root: &T)
                   -> Box<Future<Item = Value, Error = ResolveError>>
+    where T: Resolvable
+{
+    resolve_inner(ctx, Rc::new(RefCell::new(selection_set.fields)), root)
+}
+
+pub fn resolve_inner<T>(ctx: Context,
+                        fields: Rc<RefCell<Vec<Field>>>,
+                        root: &T)
+                        -> Box<Future<Item = Value, Error = ResolveError>>
     where T: Resolvable
 {
     // NOTICE: the following could not be used:
@@ -107,16 +229,24 @@ pub fn resolve<T>(ctx: Context,
     let mut fs = Vec::new();
     let mut obj = Vec::new();
 
-    // while let Some(field) = sele
-    for field in selection_set.fields {
+    for field in fields.borrow_mut().iter_mut() {
         let field_name = match field.alias {
             Some(ref alias) => alias.clone(),
             None => field.name.clone(),
         };
 
-        match root.resolve(ctx.clone(), field) {
-            Some(Resolve::Now(val)) => obj.push((field_name, val)),
-            Some(Resolve::Async(fut)) => {
+        let ex = Resolve {
+            ctx: ctx.clone(),
+            fields: (*field)
+                .selection_set
+                .take()
+                .map(|ss| Rc::new(RefCell::new(ss.fields))),
+        };
+        let args = Arguments(field.arguments.as_ref());
+
+        match root.resolve(ex, &field.name, args) {
+            Some(ResolveResult::Now(val)) => obj.push((field_name, val)),
+            Some(ResolveResult::Async(fut)) => {
                 let i = obj.len();
                 obj.push((field_name, Value::Null));
                 fs.push(fut.map(move |val| (i, val)))
@@ -133,4 +263,12 @@ pub fn resolve<T>(ctx: Context,
                                        });
 
     Box::new(fut)
+}
+
+#[test]
+fn test_arguments_get() {
+    let mut hm = HashMap::new();
+    hm.insert("test".to_string(), ParserValue::Int(42));
+    let args = Arguments(Some(&hm));
+    assert_eq!(args.get::<i32>("test"), Some(42));
 }
