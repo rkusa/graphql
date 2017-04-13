@@ -35,12 +35,28 @@ impl Resolve {
         Some(ResolveResult::Now(val.into()))
     }
 
+    pub fn has_field(&self, name: &str) -> bool {
+        match self.fields {
+            Some(ref fields) => {
+                // TODO: better contains search
+                for field in fields.borrow().iter() {
+                    if field.name == name  {
+                        return true
+                    }
+                }
+
+                false
+            }
+            None => false
+        }
+    }
+
     pub fn context(&self) -> &Context {
         &self.ctx
     }
 
-    pub fn resolve<T, R>(&self, val: T) -> Option<ResolveResult>
-        where T: Into<IntermediateResult<R>>,
+    pub fn resolve<'a, T, R>(&self, val: T) -> Option<ResolveResult>
+        where T: Into<IntermediateResult<'a, R>>,
               R: Resolvable + 'static
     {
         Some(ResolveResult::Async(match self.fields {
