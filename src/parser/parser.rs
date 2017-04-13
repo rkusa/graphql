@@ -394,6 +394,8 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod test {
+    use std::rc::Rc;
+    use std::cell::RefCell;
     use parser::parser::*;
 
     fn new_field(name: &str) -> Field {
@@ -413,6 +415,10 @@ mod test {
         map
     }
 
+    fn fields(vec: Vec<Field>) -> Rc<RefCell<Vec<Field>>> {
+        Rc::new(RefCell::new(vec))
+    }
+
     #[test]
     fn value_into() {
         let val = &Value::Int(42);
@@ -422,28 +428,28 @@ mod test {
 
     #[test]
     fn ignore_unicode_bom() {
-        assert_eq!(parse("\u{FEFF}{}"), Ok(SelectionSet { fields: vec![] }));
+        assert_eq!(parse("\u{FEFF}{}"), Ok(SelectionSet { fields: fields(vec![]) }));
     }
 
     #[test]
     fn selection_set() {
         assert_eq!(parse("{"), Err(ParserError(ErrorKind::UnexpectedToken, 1)));
-        assert_eq!(parse("{}"), Ok(SelectionSet { fields: vec![] }));
-        assert_eq!(parse("query {}"), Ok(SelectionSet { fields: vec![] }));
-        assert_eq!(parse("mutation {}"), Ok(SelectionSet { fields: vec![] }));
+        assert_eq!(parse("{}"), Ok(SelectionSet { fields: fields(vec![]) }));
+        assert_eq!(parse("query {}"), Ok(SelectionSet { fields: fields(vec![]) }));
+        assert_eq!(parse("mutation {}"), Ok(SelectionSet { fields: fields(vec![]) }));
         assert_eq!(parse("{id name}"),
-                   Ok(SelectionSet { fields: vec![new_field("id"), new_field("name")] }));
+                   Ok(SelectionSet { fields: fields(vec![new_field("id"), new_field("name")]) }));
     }
 
     #[test]
     fn field_alias() {
         let expected = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "name".to_string(),
                              alias: Some("firstname".to_string()),
                              arguments: None,
                              selection_set: None,
-                         }],
+                         }]),
         };
         assert_eq!(parse("{firstname: name}"), Ok(expected));
     }
@@ -451,12 +457,12 @@ mod test {
     #[test]
     fn nested_selection_set() {
         let expected = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "user".to_string(),
                              alias: None,
                              arguments: None,
-                             selection_set: Some(SelectionSet { fields: vec![new_field("name")] }),
-                         }],
+                             selection_set: Some(SelectionSet { fields: fields(vec![new_field("name")]) }),
+                         }]),
         };
         assert_eq!(parse("{user { name }}"), Ok(expected));
     }
@@ -464,12 +470,12 @@ mod test {
     #[test]
     fn argument_int() {
         let expected = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "user".to_string(),
                              alias: None,
                              arguments: Some(arg("id", 42)),
-                             selection_set: Some(SelectionSet { fields: vec![new_field("name")] }),
-                         }],
+                             selection_set: Some(SelectionSet { fields: fields(vec![new_field("name")]) }),
+                         }]),
         };
         assert_eq!(parse("{user (id: 42) { name }}"), Ok(expected));
     }
@@ -477,21 +483,21 @@ mod test {
     #[test]
     fn argument_bool() {
         let expected1 = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "user".to_string(),
                              alias: None,
                              arguments: Some(arg("id", true)),
                              selection_set: None,
-                         }],
+                         }]),
         };
         assert_eq!(parse("{user (id: true)}"), Ok(expected1));
         let expected2 = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "user".to_string(),
                              alias: None,
                              arguments: Some(arg("id", false)),
                              selection_set: None,
-                         }],
+                         }]),
         };
         assert_eq!(parse("{user (id: false)}"), Ok(expected2));
     }
@@ -499,12 +505,12 @@ mod test {
     #[test]
     fn argument_null() {
         let expected = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "user".to_string(),
                              alias: None,
                              arguments: Some(arg("id", Value::Null)),
                              selection_set: None,
-                         }],
+                         }]),
         };
         assert_eq!(parse("{user (id: null)}"), Ok(expected));
     }
@@ -512,12 +518,12 @@ mod test {
     #[test]
     fn argument_enum() {
         let expected = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "user".to_string(),
                              alias: None,
                              arguments: Some(arg("id", Value::Enum("whatever".to_string()))),
                              selection_set: None,
-                         }],
+                         }]),
         };
         assert_eq!(parse("{user (id: whatever)}"), Ok(expected));
     }
@@ -525,40 +531,40 @@ mod test {
     #[test]
     fn argument_variable() {
         let expected1 = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "user".to_string(),
                              alias: None,
                              arguments: Some(arg("id",
                                                  Value::Variable("variable".to_string(), None))),
                              selection_set: None,
-                         }],
+                         }]),
         };
         assert_eq!(parse("{user (id: $variable)}"), Ok(expected1));
         let expected2 = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "user".to_string(),
                              alias: None,
                              arguments: Some(arg("id", Value::Variable("true".to_string(), None))),
                              selection_set: None,
-                         }],
+                         }]),
         };
         assert_eq!(parse("{user (id: $true)}"), Ok(expected2));
         let expected3 = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "user".to_string(),
                              alias: None,
                              arguments: Some(arg("id", Value::Variable("false".to_string(), None))),
                              selection_set: None,
-                         }],
+                         }]),
         };
         assert_eq!(parse("{user (id: $false)}"), Ok(expected3));
         let expected4 = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "user".to_string(),
                              alias: None,
                              arguments: Some(arg("id", Value::Variable("null".to_string(), None))),
                              selection_set: None,
-                         }],
+                         }]),
         };
         assert_eq!(parse("{user (id: $null)}"), Ok(expected4));
     }
@@ -566,7 +572,7 @@ mod test {
     #[test]
     fn argument_variable_default_value() {
         let expected = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "user".to_string(),
                              alias: None,
                              arguments: Some(
@@ -574,7 +580,7 @@ mod test {
                     Value::Variable("foo".to_string(),
                         Some(Box::new(Value::String("bar".to_string())))))),
                              selection_set: None,
-                         }],
+                         }]),
         };
         assert_eq!(parse("{user (id: $foo = \"bar\")}"), Ok(expected));
         assert_eq!(parse("{user (id: $foo = $bar)}"),
@@ -584,7 +590,7 @@ mod test {
     #[test]
     fn argument_list() {
         let expected = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "update".to_string(),
                              alias: None,
                              arguments: Some(arg("data",
@@ -593,7 +599,7 @@ mod test {
                                 Value::String("foobar".to_string()),
                                 Value::Boolean(true)]))),
                              selection_set: None,
-                         }],
+                         }]),
         };
         assert_eq!(parse("{update (data: [ 42, \"foobar\" true ] )}"),
                    Ok(expected));
@@ -604,12 +610,12 @@ mod test {
     #[test]
     fn argument_object() {
         let mut expected = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "update".to_string(),
                              alias: None,
                              arguments: Some(arg("data", Value::Object(HashMap::new()))),
                              selection_set: None,
-                         }],
+                         }]),
         };
 
         assert_eq!(parse("{update (data: { } )}"), Ok(expected));
@@ -618,12 +624,12 @@ mod test {
         obj.insert("s".into(), "foobar".into());
         obj.insert("i".into(), 42.into());
         expected = SelectionSet {
-            fields: vec![Field {
+            fields: fields(vec![Field {
                              name: "update".to_string(),
                              alias: None,
                              arguments: Some(arg("data", Value::Object(obj))),
                              selection_set: None,
-                         }],
+                         }]),
         };
 
         assert_eq!(parse("{update (data: { s: \"foobar\", i: 42 } )}"),
