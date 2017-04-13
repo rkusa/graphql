@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 use super::lexer::{Lexer, TokenKind, LexerError};
 
@@ -65,7 +67,7 @@ pub struct Field {
 
 #[derive(PartialEq, Debug)]
 pub struct SelectionSet {
-    pub fields: Vec<Field>,
+    pub fields: Rc<RefCell<Vec<Field>>>,
 }
 
 struct Parser<'a> {
@@ -208,7 +210,7 @@ impl<'a> Parser<'a> {
 
             self.expect(TokenKind::RightBrace)?;
 
-            Ok(Some(SelectionSet { fields: fields }))
+            Ok(Some(SelectionSet { fields: Rc::new(RefCell::new(fields)) }))
         } else {
             Ok(None)
         }

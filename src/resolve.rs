@@ -51,10 +51,10 @@ impl Resolve {
                                   }))
     }
 
-    pub fn future<F, R, I>(&self, fut: F) -> Option<ResolveResult>
+    pub fn future<'a, F, R, I>(&self, fut: F) -> Option<ResolveResult>
         where F: Future<Item = I, Error = ResolveError> + 'static,
               R: Resolvable + 'static,
-              I: Into<IntermediateResult<R>>
+              I: Into<IntermediateResult<'a, R>>
     {
         Some(ResolveResult::Async(match self.fields {
             Some(ref fields) => {
@@ -91,12 +91,13 @@ pub enum ResolveResult {
     Async(Box<Future<Item = Value, Error = ResolveError>>),
 }
 
-pub enum IntermediateResult<T: Resolvable> {
-    Resolvable(T),
+pub enum IntermediateResult<'a, T: Resolvable + 'a> {
+    Borrowed(&'a T),
+    Owned(T),
     Vec(Vec<T>),
 }
 
-impl<T> IntermediateResult<T>
+impl<'a, T> IntermediateResult<'a, T>
     where T: Resolvable + 'static
 {
     fn resolve(self,
@@ -104,7 +105,8 @@ impl<T> IntermediateResult<T>
                fields: Rc<RefCell<Vec<Field>>>)
                -> Box<Future<Item = Value, Error = ResolveError>> {
         match self {
-            IntermediateResult::Resolvable(ref obj) => resolve_inner(ctx, fields, obj),
+            IntermediateResult::Borrowed(obj) => resolve_inner(ctx, fields, obj),
+            IntermediateResult::Owned(ref obj) => resolve_inner(ctx, fields, obj),
             IntermediateResult::Vec(vec) => {
                 let fs = vec.into_iter().map(move |obj| {
                     resolve_inner(ctx.clone(), fields.clone(), &obj)
@@ -116,18 +118,26 @@ impl<T> IntermediateResult<T>
     }
 }
 
-impl<T> From<T> for IntermediateResult<T>
-    where T: Resolvable
+impl<'a, T> From<T> for IntermediateResult<'a, T>
+    where T: Resolvable + 'a
 {
-    fn from(r: T) -> IntermediateResult<T> {
-        IntermediateResult::Resolvable(r)
+    fn from(r: T) -> IntermediateResult<'a, T> {
+        IntermediateResult::Owned(r)
     }
 }
 
-impl<T> From<Vec<T>> for IntermediateResult<T>
+impl<'a, T> From<&'a T> for IntermediateResult<'a, T>
+    where T: Resolvable + 'a
+{
+    fn from(r: &'a T) -> IntermediateResult<'a, T> {
+        IntermediateResult::Borrowed(r)
+    }
+}
+
+impl<'a, T> From<Vec<T>> for IntermediateResult<'a, T>
     where T: Resolvable
 {
-    fn from(vec: Vec<T>) -> IntermediateResult<T> {
+    fn from(vec: Vec<T>) -> IntermediateResult<'a, T> {
         IntermediateResult::Vec(vec)
     }
 }
@@ -213,7 +223,7 @@ pub fn resolve<T>(ctx: Context,
                   -> Box<Future<Item = Value, Error = ResolveError>>
     where T: Resolvable
 {
-    resolve_inner(ctx, Rc::new(RefCell::new(selection_set.fields)), root)
+    resolve_inner(ctx, selection_set.fields, root)
 }
 
 pub fn resolve_inner<T>(ctx: Context,
@@ -229,18 +239,16 @@ pub fn resolve_inner<T>(ctx: Context,
     let mut fs = Vec::new();
     let mut obj = Vec::new();
 
-    for field in fields.borrow_mut().iter_mut() {
+    for field in fields.borrow().iter() {
         let field_name = match field.alias {
             Some(ref alias) => alias.clone(),
             None => field.name.clone(),
         };
 
+        let fields = field.selection_set.as_ref().map(|ss| ss.fields.clone());
         let ex = Resolve {
             ctx: ctx.clone(),
-            fields: (*field)
-                .selection_set
-                .take()
-                .map(|ss| Rc::new(RefCell::new(ss.fields))),
+            fields: fields,
         };
         let args = Arguments(field.arguments.as_ref());
 
