@@ -13,15 +13,16 @@ pub struct Token<'a>(pub TokenKind<'a>, pub usize);
 #[derive(Debug, PartialEq)]
 pub enum TokenKind<'a> {
     // single-charachter tokens
-    LeftBrace,
-    RightBrace,
-    LeftParan,
-    RightParan,
-    LeftBracket,
-    RightBracket,
-    Colon,
-    DollarSign,
-    EqualSign,
+    LeftBrace, // {
+    RightBrace, // }
+    LeftParan, // (
+    RightParan, // )
+    LeftBracket, // [
+    RightBracket, // ]
+    Colon, // :
+    DollarSign, // %
+    EqualSign, // =
+    Bang, // !
 
     // two-character tokens
 
@@ -106,6 +107,10 @@ impl<'a> Lexer<'a> {
                     '$' => {
                         self.iter.next();
                         return Ok(Token(TokenKind::DollarSign, i));
+                    }
+                    '!' => {
+                        self.iter.next();
+                        return Ok(Token(TokenKind::Bang, i));
                     }
                     '#' => {
                         self.ignore_comment();

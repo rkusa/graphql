@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use serde_json::{Value as JsonValue};
+use serde_json::map::Map;
 
 use super::lexer::{Lexer, TokenKind, LexerError};
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum Value {
     Variable(String, Option<Box<Value>>),
     Int(i32),
@@ -51,9 +53,46 @@ impl From<String> for Value {
     }
 }
 
+impl<'a> Into<Option<String>> for &'a Value {
+    fn into(self) -> Option<String> {
+        if let &Value::String(ref s) = self {
+            Some(s.clone())
+        } else {
+            None
+        }
+    }
+}
+
 impl<'a> From<&'a str> for Value {
     fn from(s: &'a str) -> Value {
         Value::String(s.to_string())
+    }
+}
+
+impl<'a> From<&'a JsonValue> for Value {
+    fn from(v: &'a JsonValue) -> Value {
+        match v {
+            &JsonValue::Null => Value::Null,
+            &JsonValue::Bool(b) => Value::Boolean(b),
+            &JsonValue::Number(ref n) => {
+                if n.is_f64() {
+                    // TODO as f64
+                    // TODO unwrap?
+                    Value::Float(n.as_f64().unwrap() as f32)
+                } else {
+                    Value::Int(n.as_i64().unwrap() as i32)
+                }
+            },
+            &JsonValue::String(ref s) => Value::String(s.clone()),
+            &JsonValue::Array(ref a) => Value::List(a.iter().map(Value::from).collect()),
+            &JsonValue::Object(ref m) => {
+                let mut new = HashMap::new();
+                for (k, v) in m.iter() {
+                    new.insert(k.clone(), Value::from(v));
+                }
+                Value::Object(new)
+            },
+        }
     }
 }
 
@@ -71,6 +110,7 @@ pub struct SelectionSet {
 }
 
 struct Parser<'a> {
+    vars: &'a Map<String, JsonValue>,
     lexer: Lexer<'a>,
     lexer_error: Option<LexerError>,
     peeked: Option<TokenKind<'a>>,
@@ -87,6 +127,24 @@ pub enum ErrorKind {
     LexerError(LexerError),
     UnexpectedEnd,
     InvalidQuery,
+    VariableMissing,
+    NonNullable,
+    UnexpectedVariable,
+}
+
+#[derive(Debug)]
+pub enum VariableType {
+    Named(String, bool),
+    List(Box<VariableType>, bool),
+}
+
+impl VariableType {
+    fn is_nullable(&self) -> bool {
+        match self {
+            &VariableType::Named(_, nullable) => nullable,
+            &VariableType::List(_, nullable) => nullable,
+        }
+    }
 }
 
 impl ParserError {
@@ -97,6 +155,9 @@ impl ParserError {
             ErrorKind::LexerError(_) => format!("syntax error at {}", self.1),
             ErrorKind::UnexpectedEnd => format!("unexpected end at {}", self.1),
             ErrorKind::InvalidQuery => format!("invalid query at {}", self.1),
+            ErrorKind::VariableMissing => format!("variable missing at {}", self.1),
+            ErrorKind::NonNullable => format!("variable is not nullable at {}", self.1),
+            ErrorKind::UnexpectedVariable => format!("unexpected variable at {}", self.1),
         }
     }
 }
@@ -107,15 +168,16 @@ impl From<LexerError> for ErrorKind {
     }
 }
 
-pub fn parse(src: &str) -> Result<SelectionSet, ParserError> {
-    let mut parser = Parser::new(src);
+pub fn parse(src: &str, vars: &Map<String, JsonValue>) -> Result<SelectionSet, ParserError> {
+    let mut parser = Parser::new(src, vars);
     parser.document()
 }
 
 impl<'a> Parser<'a> {
-    fn new(src: &'a str) -> Parser {
+    fn new(src: &'a str, vars: &'a Map<String, JsonValue>) -> Parser<'a> {
         let lexer = Lexer::new(src);
         Parser {
+            vars: vars,
             lexer: lexer,
             lexer_error: None,
             peeked: None,
@@ -178,6 +240,7 @@ impl<'a> Parser<'a> {
         // TODO: SelectionSet |
         //       (("query" | "mutation") [Name] [VariableDefinitions] [Directives] SelectionSet)
 
+        // OperationType
         if let Some(&TokenKind::Name(operation)) = self.peek_token() {
             self.next_token(); // consume name
 
@@ -186,14 +249,116 @@ impl<'a> Parser<'a> {
             }
         }
 
-        match self.selection_set() {
+        let mut variables = None;
+
+        // VariableDefinitions
+        if let Some(v) = self.variable_definitions()? {
+            let mut vars = HashMap::new();
+
+            for (k, (t, d)) in v {
+                let val = self.vars.get(&k).map(|v| {
+                    match v {
+                        &JsonValue::Number(ref n) => {
+                            // TODO: i64 vs i32 + unwrap?
+                            match t {
+                                VariableType::Named(ref name, _) => {
+                                    match name.as_str() {
+                                        "Int" if n.is_i64() =>
+                                            Value::Int(n.as_i64().unwrap() as i32),
+                                        "Int" if n.is_u64() =>
+                                            Value::Int(n.as_u64().unwrap() as i32),
+                                        "Float" if n.is_f64() =>
+                                            Value::Float(n.as_f64().unwrap() as f32),
+                                        _ => Value::Null,
+                                    }
+                                }
+                                _ => Value::Null,
+                            }
+                        }
+                        // TODO: other types
+                        // TODO: better error handling
+                        _ => Value::Null,
+                    }
+                }).or_else(|| d);
+
+                match val {
+                    Some(val) => {
+                        if let Value::Null = val {
+                            if !t.is_nullable() {
+                                return Err(ErrorKind::NonNullable);
+                            }
+                        }
+
+                        vars.insert(k, val);
+                    }
+                    None => {
+                        // return Err(ErrorKind::VariableMissing);
+                    }
+                }
+            }
+
+            variables = Some(vars)
+        }
+
+        match self.selection_set(variables.as_ref()) {
             Ok(Some(ss)) => Ok(ss),
             Ok(None) => Err(ErrorKind::InvalidQuery),
             Err(err) => Err(err),
         }
     }
 
-    fn selection_set(&mut self) -> Result<Option<SelectionSet>, ErrorKind> {
+    // TODO: tests for variable_definitions
+    fn variable_definitions(&mut self) -> Result<Option<HashMap<String, (VariableType, Option<Value>)>>, ErrorKind> {
+        if let Some(&TokenKind::LeftParan) = self.peek_token() {
+            self.next_token(); // consume left parent
+
+            let mut variables = HashMap::new();
+            loop {
+                match self.peek_token() {
+                    // variable
+                    Some(&TokenKind::DollarSign) => {
+                        self.next_token(); // consume dollar sign
+
+                        let name = match self.next_token() {
+                            Some(TokenKind::Name(s)) => Ok(s.to_string()),
+                            Some(TokenKind::Boolean(true)) => Ok("true".to_string()),
+                            Some(TokenKind::Boolean(false)) => Ok("false".to_string()),
+                            Some(TokenKind::Null) => Ok("null".to_string()),
+                            Some(_) => Err(ErrorKind::UnexpectedToken),
+                            None => Err(ErrorKind::ExpectedToken),
+                        }?;
+
+                        self.expect(TokenKind::Colon)?;
+
+                        let input_type = self.input_type()?;
+                        let mut default = None;
+
+                        // default value
+                        if let Some(&TokenKind::EqualSign) = self.peek_token() {
+                            self.next_token(); // consume equal sign
+
+                            default = Some(self.value(true)?);
+                        }
+
+                        variables.insert(name, (input_type, default));
+                    },
+                    Some(_) | None => break,
+                }
+            }
+
+            if variables.len() == 0 {
+                return Err(ErrorKind::InvalidQuery);
+            }
+
+            self.expect(TokenKind::RightParan)?;
+
+            Ok(Some(variables))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn selection_set(&mut self, vars: Option<&HashMap<String, Value>>) -> Result<Option<SelectionSet>, ErrorKind> {
         // TODO: "{" (Field | FragmentSpread | InlineFragment)+ "}"
 
         if let Some(&TokenKind::LeftBrace) = self.peek_token() {
@@ -201,7 +366,7 @@ impl<'a> Parser<'a> {
 
             let mut fields = vec![];
             loop {
-                match self.field() {
+                match self.field(vars) {
                     Ok(Some(field)) => fields.push(field),
                     Ok(None) => break,
                     Err(err) => return Err(err),
@@ -216,7 +381,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn field(&mut self) -> Result<Option<Field>, ErrorKind> {
+    fn field(&mut self, vars: Option<&HashMap<String, Value>>) -> Result<Option<Field>, ErrorKind> {
         // TODO: [Alias] Name [Arguments] [Directives] [SelectionSet]
 
         if let Some(&TokenKind::Name(n)) = self.peek_token() {
@@ -238,8 +403,8 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            let arguments = self.arguments()?;
-            let selection_set = self.selection_set()?;
+            let arguments = self.arguments(vars)?;
+            let selection_set = self.selection_set(vars)?;
 
             Ok(Some(Field {
                         alias: alias,
@@ -252,7 +417,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn arguments(&mut self) -> Result<Option<HashMap<String, Value>>, ErrorKind> {
+    fn arguments(&mut self, vars: Option<&HashMap<String, Value>>) -> Result<Option<HashMap<String, Value>>, ErrorKind> {
         // "(" (Name : Value)+ ")"
 
         if let Some(&TokenKind::LeftParan) = self.peek_token() {
@@ -260,7 +425,7 @@ impl<'a> Parser<'a> {
 
             let mut arguments = HashMap::new();
             loop {
-                match self.argument() {
+                match self.argument(vars) {
                     Ok(Some((k, v))) => {
                         arguments.insert(k, v);
                     }
@@ -281,13 +446,21 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn argument(&mut self) -> Result<Option<(String, Value)>, ErrorKind> {
+    fn argument(&mut self, vars: Option<&HashMap<String, Value>>) -> Result<Option<(String, Value)>, ErrorKind> {
         if let Some(&TokenKind::Name(name)) = self.peek_token() {
             self.next_token(); // consume name
 
             self.expect(TokenKind::Colon)?;
 
-            let value = self.value(false)?;
+            let mut value = self.value(false)?;
+            if let Value::Variable(name, val) = value {
+                let coerce = vars.and_then(|m| m.get(&name).map(|r| (*r).clone()))
+                    .or_else(|| val.map(|v| *v));
+                match coerce {
+                    Some(val) => value = val,
+                    None => return Err(ErrorKind::UnexpectedVariable),
+                }
+            }
 
             Ok(Some((name.to_string(), value)))
         } else {
@@ -378,6 +551,35 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // TODO: tests for input_type
+    fn input_type(&mut self) -> Result<VariableType, ErrorKind> {
+        match self.next_token() {
+            Some(TokenKind::Name(s)) => {
+                if let Some(&TokenKind::Bang) = self.peek_token() {
+                    self.next_token(); // consume
+                    Ok(VariableType::Named(s.to_string(), false))
+                } else {
+                    Ok(VariableType::Named(s.to_string(), true))
+                }
+            },
+            Some(TokenKind::LeftBracket) => {
+                // TODO: prevent stackoverflow attacks
+                let inner = Box::new(self.input_type()?);
+
+                self.expect(TokenKind::RightBracket)?;
+
+                if let Some(&TokenKind::Bang) = self.peek_token() {
+                    self.next_token(); // consume
+                    Ok(VariableType::List(inner, false))
+                } else {
+                    Ok(VariableType::List(inner, true))
+                }
+            }
+            Some(_) | None => Err(ErrorKind::UnexpectedToken),
+            // None => Err(ErrorKind::ExpectedToken),
+        }
+    }
+
     fn expect(&mut self, token: TokenKind) -> Result<(), ErrorKind> {
         match self.next_token() {
             Some(t) => {
@@ -397,6 +599,13 @@ mod test {
     use std::rc::Rc;
     use std::cell::RefCell;
     use parser::parser::*;
+    use parser::parser::{parse as parse_original};
+    use serde_json::map::Map;
+
+    fn parse(src: &str) -> Result<SelectionSet, ParserError> {
+        let vars = Map::new();
+        parse_original(src, &vars)
+    }
 
     fn new_field(name: &str) -> Field {
         Field {
@@ -535,38 +744,38 @@ mod test {
                              name: "user".to_string(),
                              alias: None,
                              arguments: Some(arg("id",
-                                                 Value::Variable("variable".to_string(), None))),
+                                                 Value::Int(1))),
                              selection_set: None,
                          }]),
         };
-        assert_eq!(parse("{user (id: $variable)}"), Ok(expected1));
+        assert_eq!(parse("query ($var: Int = 1) {user (id: $var)}"), Ok(expected1));
         let expected2 = SelectionSet {
             fields: fields(vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(arg("id", Value::Variable("true".to_string(), None))),
+                             arguments: Some(arg("id", Value::Int(2))),
                              selection_set: None,
                          }]),
         };
-        assert_eq!(parse("{user (id: $true)}"), Ok(expected2));
+        assert_eq!(parse("query ($true: Int = 2) {user (id: $true)}"), Ok(expected2));
         let expected3 = SelectionSet {
             fields: fields(vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(arg("id", Value::Variable("false".to_string(), None))),
+                             arguments: Some(arg("id", Value::Int(3))),
                              selection_set: None,
                          }]),
         };
-        assert_eq!(parse("{user (id: $false)}"), Ok(expected3));
+        assert_eq!(parse("query ($false: Int = 3) {user (id: $false)}"), Ok(expected3));
         let expected4 = SelectionSet {
             fields: fields(vec![Field {
                              name: "user".to_string(),
                              alias: None,
-                             arguments: Some(arg("id", Value::Variable("null".to_string(), None))),
+                             arguments: Some(arg("id", Value::Int(4))),
                              selection_set: None,
                          }]),
         };
-        assert_eq!(parse("{user (id: $null)}"), Ok(expected4));
+        assert_eq!(parse("query ($null: Int = 4) {user (id: $null)}"), Ok(expected4));
     }
 
     #[test]
@@ -576,13 +785,11 @@ mod test {
                              name: "user".to_string(),
                              alias: None,
                              arguments: Some(
-                arg("id",
-                    Value::Variable("foo".to_string(),
-                        Some(Box::new(Value::String("bar".to_string())))))),
+                arg("id", Value::String("bar".to_string()))),
                              selection_set: None,
                          }]),
         };
-        assert_eq!(parse("{user (id: $foo = \"bar\")}"), Ok(expected));
+        assert_eq!(parse("query ($foo: String) {user (id: $foo = \"bar\")}"), Ok(expected));
         assert_eq!(parse("{user (id: $foo = $bar)}"),
                    Err(ParserError(ErrorKind::UnexpectedToken, 18)));
     }

@@ -2,13 +2,14 @@
 
 extern crate test;
 extern crate graphql;
+extern crate serde_json;
 
 use test::Bencher;
-
 use graphql::parser;
+use serde_json::map::Map;
 
-const TEST_STR: &'static str = r#"query {
-  user (id: -123) {
+const TEST_STR: &'static str = r#"query ($id: Int = 42) {
+  user (id: $id) {
       name
       id
   }
@@ -16,5 +17,6 @@ const TEST_STR: &'static str = r#"query {
 
 #[bench]
 fn bench_parse(b: &mut Bencher) {
-    b.iter(|| { let _ = parser::parse(TEST_STR); });
+    let vars = Map::new();
+    b.iter(|| { let _ = parser::parse(TEST_STR, &vars); });
 }

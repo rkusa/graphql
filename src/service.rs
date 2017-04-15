@@ -4,7 +4,8 @@ use hyper::status::StatusCode;
 use hyper::header::{ContentType, ContentLength};
 use hyper::server::{Service, NewService, Request, Response};
 use futures::{future, Future, Stream};
-use serde_json;
+use serde_json::{self, Value as JsonValue};
+use serde_json::map::Map;
 use {Resolvable, parser};
 use resolve::resolve;
 use ctx;
@@ -36,9 +37,9 @@ impl error::Error for Error {
 #[derive(Serialize, Deserialize)]
 struct PostQuery {
     query: String,
+    variables: Map<String, JsonValue>,
     // TODO:
     // operationName
-    // variables
 }
 
 pub struct GraphQL<R>
@@ -63,7 +64,7 @@ fn handle_graphql_request<T>(buffer: &Vec<u8>,
     let result = serde_json::from_slice::<PostQuery>(&buffer)
         .map_err(|_| Error::BadRequest("invalid json body".to_string()))
         .and_then(|query| {
-                      parser::parse(&query.query).map_err(|err| {
+                      parser::parse(&query.query, &query.variables).map_err(|err| {
                                                               println!("{:?}", err);
                                                               Error::BadRequest(err.as_str())
                                                           })
