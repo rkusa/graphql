@@ -13,4 +13,4 @@ pub mod parser;
 mod resolve;
 
 pub use parser::{Field, parse, Value as ParserValue};
-pub use resolve::{Resolvable, ResolveResult, ResolveError, Value, resolve, Resolve, Arguments};
+pub use resolve::{Resolvable, ResolveResult, ResolveValue, ResolveError, Value, resolve, Resolve};

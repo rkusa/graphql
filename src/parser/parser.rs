@@ -1,100 +1,11 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
-use serde_json::{Value as JsonValue};
+use serde_json::Value as JsonValue;
 use serde_json::map::Map;
 
 use super::lexer::{Lexer, TokenKind, LexerError};
-
-#[derive(PartialEq, Debug, Clone)]
-pub enum Value {
-    Variable(String, Option<Box<Value>>),
-    Int(i32),
-    Float(f32),
-    String(String),
-    Boolean(bool),
-    Null,
-    Enum(String),
-    List(Vec<Value>),
-    Object(HashMap<String, Value>),
-}
-
-impl From<i32> for Value {
-    fn from(i: i32) -> Value {
-        Value::Int(i)
-    }
-}
-
-impl<'a> Into<Option<i32>> for &'a Value {
-    fn into(self) -> Option<i32> {
-        if let &Value::Int(i) = self {
-            Some(i)
-        } else {
-            None
-        }
-    }
-}
-
-impl From<f32> for Value {
-    fn from(f: f32) -> Value {
-        Value::Float(f)
-    }
-}
-
-impl From<bool> for Value {
-    fn from(b: bool) -> Value {
-        Value::Boolean(b)
-    }
-}
-
-impl From<String> for Value {
-    fn from(s: String) -> Value {
-        Value::String(s)
-    }
-}
-
-impl<'a> Into<Option<String>> for &'a Value {
-    fn into(self) -> Option<String> {
-        if let &Value::String(ref s) = self {
-            Some(s.clone())
-        } else {
-            None
-        }
-    }
-}
-
-impl<'a> From<&'a str> for Value {
-    fn from(s: &'a str) -> Value {
-        Value::String(s.to_string())
-    }
-}
-
-impl<'a> From<&'a JsonValue> for Value {
-    fn from(v: &'a JsonValue) -> Value {
-        match v {
-            &JsonValue::Null => Value::Null,
-            &JsonValue::Bool(b) => Value::Boolean(b),
-            &JsonValue::Number(ref n) => {
-                if n.is_f64() {
-                    // TODO as f64
-                    // TODO unwrap?
-                    Value::Float(n.as_f64().unwrap() as f32)
-                } else {
-                    Value::Int(n.as_i64().unwrap() as i32)
-                }
-            },
-            &JsonValue::String(ref s) => Value::String(s.clone()),
-            &JsonValue::Array(ref a) => Value::List(a.iter().map(Value::from).collect()),
-            &JsonValue::Object(ref m) => {
-                let mut new = HashMap::new();
-                for (k, v) in m.iter() {
-                    new.insert(k.clone(), Value::from(v));
-                }
-                Value::Object(new)
-            },
-        }
-    }
-}
+use super::value::Value;
 
 #[derive(PartialEq, Debug)]
 pub struct Field {
@@ -256,44 +167,45 @@ impl<'a> Parser<'a> {
             let mut vars = HashMap::new();
 
             for (k, (t, d)) in v {
-                let val = self.vars.get(&k).map(|v| {
-                    match v {
-                        &JsonValue::Number(ref n) => {
-                            // TODO: i64 vs i32 + unwrap?
-                            match t {
-                                VariableType::Named(ref name, _) => {
-                                    match name.as_str() {
-                                        "Int" if n.is_i64() =>
-                                            Value::Int(n.as_i64().unwrap() as i32),
-                                        "Int" if n.is_u64() =>
-                                            Value::Int(n.as_u64().unwrap() as i32),
-                                        "Float" if n.is_f64() =>
-                                            Value::Float(n.as_f64().unwrap() as f32),
-                                        _ => Value::Null,
+                let val = self.vars
+                    .get(&k)
+                    .map(|v| {
+                        match v {
+                            &JsonValue::Number(ref n) => {
+                                // TODO: i64 vs i32 + unwrap?
+                                match t {
+                                    VariableType::Named(ref name, _) => {
+                                        match name.as_str() {
+                                            "Int" if n.is_i64() => {
+                                                Value::Int(n.as_i64().unwrap() as i32)
+                                            }
+                                            "Int" if n.is_u64() => {
+                                                Value::Int(n.as_u64().unwrap() as i32)
+                                            }
+                                            "Float" if n.is_f64() => {
+                                                Value::Float(n.as_f64().unwrap() as f32)
+                                            }
+                                            _ => Value::Null,
+                                        }
                                     }
+                                    _ => Value::Null,
                                 }
-                                _ => Value::Null,
                             }
+                            // TODO: other types
+                            // TODO: better error handling
+                            _ => Value::Null,
                         }
-                        // TODO: other types
-                        // TODO: better error handling
-                        _ => Value::Null,
-                    }
-                }).or_else(|| d);
+                    })
+                    .or_else(|| d);
 
-                match val {
-                    Some(val) => {
-                        if let Value::Null = val {
-                            if !t.is_nullable() {
-                                return Err(ErrorKind::NonNullable);
-                            }
+                if let Some(val) = val {
+                    if let Value::Null = val {
+                        if !t.is_nullable() {
+                            return Err(ErrorKind::NonNullable);
                         }
+                    }
 
-                        vars.insert(k, val);
-                    }
-                    None => {
-                        // return Err(ErrorKind::VariableMissing);
-                    }
+                    vars.insert(k, val);
                 }
             }
 
@@ -308,7 +220,9 @@ impl<'a> Parser<'a> {
     }
 
     // TODO: tests for variable_definitions
-    fn variable_definitions(&mut self) -> Result<Option<HashMap<String, (VariableType, Option<Value>)>>, ErrorKind> {
+    fn variable_definitions
+        (&mut self)
+         -> Result<Option<HashMap<String, (VariableType, Option<Value>)>>, ErrorKind> {
         if let Some(&TokenKind::LeftParan) = self.peek_token() {
             self.next_token(); // consume left parent
 
@@ -337,11 +251,11 @@ impl<'a> Parser<'a> {
                         if let Some(&TokenKind::EqualSign) = self.peek_token() {
                             self.next_token(); // consume equal sign
 
-                            default = Some(self.value(true)?);
+                            default = Some(self.value(None, true)?);
                         }
 
                         variables.insert(name, (input_type, default));
-                    },
+                    }
                     Some(_) | None => break,
                 }
             }
@@ -358,7 +272,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn selection_set(&mut self, vars: Option<&HashMap<String, Value>>) -> Result<Option<SelectionSet>, ErrorKind> {
+    fn selection_set(&mut self,
+                     vars: Option<&HashMap<String, Value>>)
+                     -> Result<Option<SelectionSet>, ErrorKind> {
         // TODO: "{" (Field | FragmentSpread | InlineFragment)+ "}"
 
         if let Some(&TokenKind::LeftBrace) = self.peek_token() {
@@ -417,7 +333,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn arguments(&mut self, vars: Option<&HashMap<String, Value>>) -> Result<Option<HashMap<String, Value>>, ErrorKind> {
+    fn arguments(&mut self,
+                 vars: Option<&HashMap<String, Value>>)
+                 -> Result<Option<HashMap<String, Value>>, ErrorKind> {
         // "(" (Name : Value)+ ")"
 
         if let Some(&TokenKind::LeftParan) = self.peek_token() {
@@ -446,29 +364,25 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn argument(&mut self, vars: Option<&HashMap<String, Value>>) -> Result<Option<(String, Value)>, ErrorKind> {
+    fn argument(&mut self,
+                vars: Option<&HashMap<String, Value>>)
+                -> Result<Option<(String, Value)>, ErrorKind> {
         if let Some(&TokenKind::Name(name)) = self.peek_token() {
             self.next_token(); // consume name
 
             self.expect(TokenKind::Colon)?;
 
-            let mut value = self.value(false)?;
-            if let Value::Variable(name, val) = value {
-                let coerce = vars.and_then(|m| m.get(&name).map(|r| (*r).clone()))
-                    .or_else(|| val.map(|v| *v));
-                match coerce {
-                    Some(val) => value = val,
-                    None => return Err(ErrorKind::UnexpectedVariable),
-                }
-            }
-
+            let value = self.value(vars, false)?;
             Ok(Some((name.to_string(), value)))
         } else {
             Ok(None)
         }
     }
 
-    fn value(&mut self, const_only: bool) -> Result<Value, ErrorKind> {
+    fn value(&mut self,
+             vars: Option<&HashMap<String, Value>>,
+             const_only: bool)
+             -> Result<Value, ErrorKind> {
         match self.peek_token() {
             // is variable
             Some(&TokenKind::DollarSign) => {
@@ -479,21 +393,29 @@ impl<'a> Parser<'a> {
                 self.next_token(); // consume dollar sign
 
                 let name = match self.next_token() {
-                    Some(TokenKind::Name(s)) => Ok(s.to_string()),
-                    Some(TokenKind::Boolean(true)) => Ok("true".to_string()),
-                    Some(TokenKind::Boolean(false)) => Ok("false".to_string()),
-                    Some(TokenKind::Null) => Ok("null".to_string()),
+                    Some(TokenKind::Name(s)) => Ok(s),
+                    Some(TokenKind::Boolean(true)) => Ok("true"),
+                    Some(TokenKind::Boolean(false)) => Ok("false"),
+                    Some(TokenKind::Null) => Ok("null"),
                     Some(_) => Err(ErrorKind::UnexpectedToken),
                     None => Err(ErrorKind::ExpectedToken),
                 }?;
 
                 // default value
-                if let Some(&TokenKind::EqualSign) = self.peek_token() {
+                let default = if let Some(&TokenKind::EqualSign) = self.peek_token() {
                     self.next_token(); // consume equal sign
 
-                    Ok(Value::Variable(name, Some(Box::new(self.value(true)?))))
+                    Some(self.value(None, true)?)
                 } else {
-                    Ok(Value::Variable(name, None))
+                    None
+                };
+
+                // coerce variable
+                let coerce = vars.and_then(|m| m.get(name).map(|r| (*r).clone()))
+                    .or(default);
+                match coerce {
+                    Some(val) => Ok(val),
+                    None => return Err(ErrorKind::UnexpectedVariable),
                 }
             }
             // is list
@@ -508,7 +430,7 @@ impl<'a> Parser<'a> {
                         self.next_token(); // consume right bracket
                         break;
                     } else {
-                        list.push(self.value(true)?);
+                        list.push(self.value(None, true)?);
                     }
                 }
 
@@ -526,7 +448,7 @@ impl<'a> Parser<'a> {
                         Some(TokenKind::Name(name)) => {
                             self.expect(TokenKind::Colon)?;
 
-                            let value = self.value(true)?;
+                            let value = self.value(None, true)?;
                             obj.insert(name.to_string(), value);
                         }
                         Some(_) => return Err(ErrorKind::UnexpectedToken),
@@ -561,7 +483,7 @@ impl<'a> Parser<'a> {
                 } else {
                     Ok(VariableType::Named(s.to_string(), true))
                 }
-            },
+            }
             Some(TokenKind::LeftBracket) => {
                 // TODO: prevent stackoverflow attacks
                 let inner = Box::new(self.input_type()?);
@@ -599,7 +521,7 @@ mod test {
     use std::rc::Rc;
     use std::cell::RefCell;
     use parser::parser::*;
-    use parser::parser::{parse as parse_original};
+    use parser::parser::parse as parse_original;
     use serde_json::map::Map;
 
     fn parse(src: &str) -> Result<SelectionSet, ParserError> {
@@ -631,21 +553,24 @@ mod test {
     #[test]
     fn value_into() {
         let val = &Value::Int(42);
-        let opt : Option<i32> = val.into();
+        let opt: Option<i32> = val.into();
         assert_eq!(opt, Some(42));
     }
 
     #[test]
     fn ignore_unicode_bom() {
-        assert_eq!(parse("\u{FEFF}{}"), Ok(SelectionSet { fields: fields(vec![]) }));
+        assert_eq!(parse("\u{FEFF}{}"),
+                   Ok(SelectionSet { fields: fields(vec![]) }));
     }
 
     #[test]
     fn selection_set() {
         assert_eq!(parse("{"), Err(ParserError(ErrorKind::UnexpectedToken, 1)));
         assert_eq!(parse("{}"), Ok(SelectionSet { fields: fields(vec![]) }));
-        assert_eq!(parse("query {}"), Ok(SelectionSet { fields: fields(vec![]) }));
-        assert_eq!(parse("mutation {}"), Ok(SelectionSet { fields: fields(vec![]) }));
+        assert_eq!(parse("query {}"),
+                   Ok(SelectionSet { fields: fields(vec![]) }));
+        assert_eq!(parse("mutation {}"),
+                   Ok(SelectionSet { fields: fields(vec![]) }));
         assert_eq!(parse("{id name}"),
                    Ok(SelectionSet { fields: fields(vec![new_field("id"), new_field("name")]) }));
     }
@@ -654,11 +579,11 @@ mod test {
     fn field_alias() {
         let expected = SelectionSet {
             fields: fields(vec![Field {
-                             name: "name".to_string(),
-                             alias: Some("firstname".to_string()),
-                             arguments: None,
-                             selection_set: None,
-                         }]),
+                                    name: "name".to_string(),
+                                    alias: Some("firstname".to_string()),
+                                    arguments: None,
+                                    selection_set: None,
+                                }]),
         };
         assert_eq!(parse("{firstname: name}"), Ok(expected));
     }
@@ -667,11 +592,13 @@ mod test {
     fn nested_selection_set() {
         let expected = SelectionSet {
             fields: fields(vec![Field {
-                             name: "user".to_string(),
-                             alias: None,
-                             arguments: None,
-                             selection_set: Some(SelectionSet { fields: fields(vec![new_field("name")]) }),
-                         }]),
+                                    name: "user".to_string(),
+                                    alias: None,
+                                    arguments: None,
+                                    selection_set: Some(SelectionSet {
+                                                            fields: fields(vec![new_field("name")]),
+                                                        }),
+                                }]),
         };
         assert_eq!(parse("{user { name }}"), Ok(expected));
     }
@@ -680,11 +607,13 @@ mod test {
     fn argument_int() {
         let expected = SelectionSet {
             fields: fields(vec![Field {
-                             name: "user".to_string(),
-                             alias: None,
-                             arguments: Some(arg("id", 42)),
-                             selection_set: Some(SelectionSet { fields: fields(vec![new_field("name")]) }),
-                         }]),
+                                    name: "user".to_string(),
+                                    alias: None,
+                                    arguments: Some(arg("id", 42)),
+                                    selection_set: Some(SelectionSet {
+                                                            fields: fields(vec![new_field("name")]),
+                                                        }),
+                                }]),
         };
         assert_eq!(parse("{user (id: 42) { name }}"), Ok(expected));
     }
@@ -693,20 +622,20 @@ mod test {
     fn argument_bool() {
         let expected1 = SelectionSet {
             fields: fields(vec![Field {
-                             name: "user".to_string(),
-                             alias: None,
-                             arguments: Some(arg("id", true)),
-                             selection_set: None,
-                         }]),
+                                    name: "user".to_string(),
+                                    alias: None,
+                                    arguments: Some(arg("id", true)),
+                                    selection_set: None,
+                                }]),
         };
         assert_eq!(parse("{user (id: true)}"), Ok(expected1));
         let expected2 = SelectionSet {
             fields: fields(vec![Field {
-                             name: "user".to_string(),
-                             alias: None,
-                             arguments: Some(arg("id", false)),
-                             selection_set: None,
-                         }]),
+                                    name: "user".to_string(),
+                                    alias: None,
+                                    arguments: Some(arg("id", false)),
+                                    selection_set: None,
+                                }]),
         };
         assert_eq!(parse("{user (id: false)}"), Ok(expected2));
     }
@@ -715,11 +644,11 @@ mod test {
     fn argument_null() {
         let expected = SelectionSet {
             fields: fields(vec![Field {
-                             name: "user".to_string(),
-                             alias: None,
-                             arguments: Some(arg("id", Value::Null)),
-                             selection_set: None,
-                         }]),
+                                    name: "user".to_string(),
+                                    alias: None,
+                                    arguments: Some(arg("id", Value::Null)),
+                                    selection_set: None,
+                                }]),
         };
         assert_eq!(parse("{user (id: null)}"), Ok(expected));
     }
@@ -728,11 +657,11 @@ mod test {
     fn argument_enum() {
         let expected = SelectionSet {
             fields: fields(vec![Field {
-                             name: "user".to_string(),
-                             alias: None,
-                             arguments: Some(arg("id", Value::Enum("whatever".to_string()))),
-                             selection_set: None,
-                         }]),
+                                    name: "user".to_string(),
+                                    alias: None,
+                                    arguments: Some(arg("id", Value::Enum("whatever".to_string()))),
+                                    selection_set: None,
+                                }]),
         };
         assert_eq!(parse("{user (id: whatever)}"), Ok(expected));
     }
@@ -741,55 +670,58 @@ mod test {
     fn argument_variable() {
         let expected1 = SelectionSet {
             fields: fields(vec![Field {
-                             name: "user".to_string(),
-                             alias: None,
-                             arguments: Some(arg("id",
-                                                 Value::Int(1))),
-                             selection_set: None,
-                         }]),
+                                    name: "user".to_string(),
+                                    alias: None,
+                                    arguments: Some(arg("id", Value::Int(1))),
+                                    selection_set: None,
+                                }]),
         };
-        assert_eq!(parse("query ($var: Int = 1) {user (id: $var)}"), Ok(expected1));
+        assert_eq!(parse("query ($var: Int = 1) {user (id: $var)}"),
+                   Ok(expected1));
         let expected2 = SelectionSet {
             fields: fields(vec![Field {
-                             name: "user".to_string(),
-                             alias: None,
-                             arguments: Some(arg("id", Value::Int(2))),
-                             selection_set: None,
-                         }]),
+                                    name: "user".to_string(),
+                                    alias: None,
+                                    arguments: Some(arg("id", Value::Int(2))),
+                                    selection_set: None,
+                                }]),
         };
-        assert_eq!(parse("query ($true: Int = 2) {user (id: $true)}"), Ok(expected2));
+        assert_eq!(parse("query ($true: Int = 2) {user (id: $true)}"),
+                   Ok(expected2));
         let expected3 = SelectionSet {
             fields: fields(vec![Field {
-                             name: "user".to_string(),
-                             alias: None,
-                             arguments: Some(arg("id", Value::Int(3))),
-                             selection_set: None,
-                         }]),
+                                    name: "user".to_string(),
+                                    alias: None,
+                                    arguments: Some(arg("id", Value::Int(3))),
+                                    selection_set: None,
+                                }]),
         };
-        assert_eq!(parse("query ($false: Int = 3) {user (id: $false)}"), Ok(expected3));
+        assert_eq!(parse("query ($false: Int = 3) {user (id: $false)}"),
+                   Ok(expected3));
         let expected4 = SelectionSet {
             fields: fields(vec![Field {
-                             name: "user".to_string(),
-                             alias: None,
-                             arguments: Some(arg("id", Value::Int(4))),
-                             selection_set: None,
-                         }]),
+                                    name: "user".to_string(),
+                                    alias: None,
+                                    arguments: Some(arg("id", Value::Int(4))),
+                                    selection_set: None,
+                                }]),
         };
-        assert_eq!(parse("query ($null: Int = 4) {user (id: $null)}"), Ok(expected4));
+        assert_eq!(parse("query ($null: Int = 4) {user (id: $null)}"),
+                   Ok(expected4));
     }
 
     #[test]
     fn argument_variable_default_value() {
         let expected = SelectionSet {
             fields: fields(vec![Field {
-                             name: "user".to_string(),
-                             alias: None,
-                             arguments: Some(
-                arg("id", Value::String("bar".to_string()))),
-                             selection_set: None,
-                         }]),
+                                    name: "user".to_string(),
+                                    alias: None,
+                                    arguments: Some(arg("id", Value::String("bar".to_string()))),
+                                    selection_set: None,
+                                }]),
         };
-        assert_eq!(parse("query ($foo: String) {user (id: $foo = \"bar\")}"), Ok(expected));
+        assert_eq!(parse("query ($foo: String) {user (id: $foo = \"bar\")}"),
+                   Ok(expected));
         assert_eq!(parse("{user (id: $foo = $bar)}"),
                    Err(ParserError(ErrorKind::UnexpectedToken, 18)));
     }
@@ -798,15 +730,15 @@ mod test {
     fn argument_list() {
         let expected = SelectionSet {
             fields: fields(vec![Field {
-                             name: "update".to_string(),
-                             alias: None,
-                             arguments: Some(arg("data",
-                                                 Value::List(vec![
+                                    name: "update".to_string(),
+                                    alias: None,
+                                    arguments: Some(arg("data",
+                                                        Value::List(vec![
                                 Value::Int(42),
                                 Value::String("foobar".to_string()),
                                 Value::Boolean(true)]))),
-                             selection_set: None,
-                         }]),
+                                    selection_set: None,
+                                }]),
         };
         assert_eq!(parse("{update (data: [ 42, \"foobar\" true ] )}"),
                    Ok(expected));
@@ -818,11 +750,11 @@ mod test {
     fn argument_object() {
         let mut expected = SelectionSet {
             fields: fields(vec![Field {
-                             name: "update".to_string(),
-                             alias: None,
-                             arguments: Some(arg("data", Value::Object(HashMap::new()))),
-                             selection_set: None,
-                         }]),
+                                    name: "update".to_string(),
+                                    alias: None,
+                                    arguments: Some(arg("data", Value::Object(HashMap::new()))),
+                                    selection_set: None,
+                                }]),
         };
 
         assert_eq!(parse("{update (data: { } )}"), Ok(expected));
@@ -832,11 +764,11 @@ mod test {
         obj.insert("i".into(), 42.into());
         expected = SelectionSet {
             fields: fields(vec![Field {
-                             name: "update".to_string(),
-                             alias: None,
-                             arguments: Some(arg("data", Value::Object(obj))),
-                             selection_set: None,
-                         }]),
+                                    name: "update".to_string(),
+                                    alias: None,
+                                    arguments: Some(arg("data", Value::Object(obj))),
+                                    selection_set: None,
+                                }]),
         };
 
         assert_eq!(parse("{update (data: { s: \"foobar\", i: 42 } )}"),

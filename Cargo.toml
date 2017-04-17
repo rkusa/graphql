@@ -11,3 +11,6 @@ futures = "0.1"
 tokio-service = "0.1"
 hyper = { git = "https://github.com/hyperium/hyper.git", branch = "master" }
 ctx = { git = "https://github.com/rkusa/ctx.git", branch = "master" }
+
+[dev-dependencies]
+lazy_static = "0.2"

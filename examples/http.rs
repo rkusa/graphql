@@ -3,7 +3,7 @@ extern crate graphql;
 extern crate ctx;
 
 use hyper::server::Http;
-use graphql::{Resolvable, ResolveResult, Resolve, Arguments};
+use graphql::{Resolvable, ResolveResult, Resolve};
 
 struct User {
     id: i32,
@@ -11,11 +11,11 @@ struct User {
 }
 
 impl Resolvable for User {
-    fn resolve(&self, r: Resolve, name: &str, _args: Arguments) -> Option<ResolveResult> {
+    fn resolve(&self, r: Resolve, name: &str) -> ResolveResult {
         match name {
             "id" => r.value(self.id),
             "name" => r.value(&self.name),
-            _ => None,
+            _ => r.none(),
         }
     }
 }
@@ -24,7 +24,7 @@ impl Resolvable for User {
 struct Root;
 
 impl Resolvable for Root {
-    fn resolve(&self, r: Resolve, name: &str, _args: Arguments) -> Option<ResolveResult> {
+    fn resolve(&self, r: Resolve, name: &str) -> ResolveResult {
         match name {
             "user" => {
                 let user = User {
@@ -34,7 +34,7 @@ impl Resolvable for Root {
                 r.resolve(user)
                 // field.resolve(ctx, &user)
             }
-            _ => None,
+            _ => r.none(),
         }
     }
 }
