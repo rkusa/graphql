@@ -4,9 +4,9 @@ version = "0.1.0"
 authors = ["Markus Ast <m@rkusa.st>"]
 
 [dependencies]
-serde = "0.9"
-serde_derive = "0.9"
-serde_json = "0.9"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
 futures = "0.1"
 tokio-service = "0.1"
 hyper = { git = "https://github.com/hyperium/hyper.git", branch = "master" }
