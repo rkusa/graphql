@@ -209,6 +209,38 @@ impl From<i32> for Value {
     }
 }
 
+impl From<u32> for Value {
+    fn from(i: u32) -> Value {
+        Value::Number(i.into())
+    }
+}
+
+impl From<i64> for Value {
+    fn from(i: i64) -> Value {
+        Value::Number(i.into())
+    }
+}
+
+impl From<u64> for Value {
+    fn from(i: u64) -> Value {
+        Value::Number(i.into())
+    }
+}
+
+impl From<f32> for Value {
+    fn from(i: f32) -> Value {
+        // TODO: no default of 0
+        Value::Number(Number::from_f64(i as f64).unwrap_or_else(|| 0.into()))
+    }
+}
+
+impl From<f64> for Value {
+    fn from(i: f64) -> Value {
+        // TODO: no unwrap
+        Value::Number(Number::from_f64(i).unwrap_or_else(|| 0.into()))
+    }
+}
+
 impl From<String> for Value {
     fn from(s: String) -> Value {
         Value::String(s)
