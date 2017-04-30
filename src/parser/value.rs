@@ -13,6 +13,7 @@ pub enum Value {
     Object(HashMap<String, Value>),
 }
 
+#[derive(Debug, PartialEq)]
 pub enum FromGqlError {
     InvalidType
 }

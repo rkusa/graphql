@@ -583,10 +583,11 @@ mod test {
     }
 
     #[test]
-    fn value_into() {
+    fn from_gql() {
+        use parser::value::FromGql;
+
         let val = &Value::Int(42);
-        let opt: Option<i32> = val.into();
-        assert_eq!(opt, Some(42));
+        assert_eq!(i32::from_gql(val), Ok(42));
     }
 
     #[test]
