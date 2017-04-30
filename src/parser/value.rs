@@ -13,18 +13,26 @@ pub enum Value {
     Object(HashMap<String, Value>),
 }
 
+pub enum FromGqlError {
+    InvalidType
+}
+
+pub trait FromGql: Sized {
+    fn from_gql(value: &Value) -> Result<Self, FromGqlError>;
+}
+
 impl From<i32> for Value {
     fn from(i: i32) -> Value {
         Value::Int(i)
     }
 }
 
-impl<'a> Into<Option<i32>> for &'a Value {
-    fn into(self) -> Option<i32> {
-        if let &Value::Int(i) = self {
-            Some(i)
+impl FromGql for i32 {
+    fn from_gql(value: &Value) -> Result<Self, FromGqlError> {
+        if let &Value::Int(i) = value {
+            Ok(i)
         } else {
-            None
+            Err(FromGqlError::InvalidType)
         }
     }
 }
@@ -35,12 +43,12 @@ impl From<f32> for Value {
     }
 }
 
-impl<'a> Into<Option<f32>> for &'a Value {
-    fn into(self) -> Option<f32> {
-        if let &Value::Float(f) = self {
-            Some(f)
+impl FromGql for f32 {
+    fn from_gql(value: &Value) -> Result<Self, FromGqlError> {
+        if let &Value::Float(f) = value {
+            Ok(f)
         } else {
-            None
+            Err(FromGqlError::InvalidType)
         }
     }
 }
@@ -51,12 +59,12 @@ impl From<bool> for Value {
     }
 }
 
-impl<'a> Into<Option<bool>> for &'a Value {
-    fn into(self) -> Option<bool> {
-        if let &Value::Boolean(b) = self {
-            Some(b)
+impl FromGql for bool {
+    fn from_gql(value: &Value) -> Result<Self, FromGqlError> {
+        if let &Value::Boolean(b) = value {
+            Ok(b)
         } else {
-            None
+            Err(FromGqlError::InvalidType)
         }
     }
 }
@@ -67,12 +75,12 @@ impl From<String> for Value {
     }
 }
 
-impl<'a> Into<Option<String>> for &'a Value {
-    fn into(self) -> Option<String> {
-        if let &Value::String(ref s) = self {
-            Some(s.clone())
+impl FromGql for String {
+    fn from_gql(value: &Value) -> Result<Self, FromGqlError> {
+        if let &Value::String(ref s) = value {
+            Ok(s.clone())
         } else {
-            None
+            Err(FromGqlError::InvalidType)
         }
     }
 }
@@ -83,12 +91,26 @@ impl<'a> From<&'a str> for Value {
     }
 }
 
-impl<'a> Into<Option<&'a str>> for &'a Value {
-    fn into(self) -> Option<&'a str> {
-        if let &Value::String(ref s) = self {
-            Some(s)
+impl<T> From<Vec<T>> for Value
+    where Value: From<T>
+{
+    fn from(v: Vec<T>) -> Value {
+        Value::List(v.into_iter().map(|v| v.into()).collect())
+    }
+}
+
+impl<T> FromGql for Vec<T>
+    where T: FromGql
+{
+    fn from_gql(value: &Value) -> Result<Self, FromGqlError> {
+        if let &Value::List(ref vec) = value {
+            let mut result = Vec::with_capacity(vec.len());
+            for v in vec.iter() {
+                result.push(T::from_gql(v)?)
+            }
+            Ok(result)
         } else {
-            None
+            Err(FromGqlError::InvalidType)
         }
     }
 }

@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use futures::{future, Future, Stream};
-use parser::{SelectionSet, Field, Value as ParserValue};
+use parser::{SelectionSet, Field, Value as ParserValue, FromGql, FromGqlError};
 use serde::ser::{Serialize, Serializer, SerializeMap};
 use serde_json::Number;
 use ctx::Context;
@@ -64,10 +64,16 @@ impl<'a> Resolve<'a> {
     }
 
     pub fn arg<T>(&self, name: &str) -> Result<T, ResolveError>
-        where &'a ParserValue: Into<Option<T>>
+        where T: FromGql
     {
-        self.args.and_then(|m| m.get(name).and_then(|v| v.into()))
-            .ok_or_else(|| ResolveError::ExpectedArgument(name.to_string()))
+        match self.args.and_then(|m| m.get(name)) {
+            Some(v) => T::from_gql(v).map_err(|err| {
+                match err {
+                    FromGqlError::InvalidType => ResolveError::InvalidArgumentType(name.to_string()),
+                }
+            }),
+            None => Err(ResolveError::ExpectedArgument(name.to_string()))
+        }
     }
 
     pub fn value<T>(&self, val: T) -> ResolveResult
@@ -303,6 +309,7 @@ pub enum ResolveError {
     InvalidField(String),
     NoSubFields,
     ExpectedArgument(String),
+    InvalidArgumentType(String),
 }
 
 impl fmt::Display for ResolveError {
@@ -311,6 +318,7 @@ impl fmt::Display for ResolveError {
             ResolveError::InvalidField(ref name) => write!(f, "Cannot query field {}", name),
             ResolveError::NoSubFields => write!(f, "Field does not have subfields"),
             ResolveError::ExpectedArgument(ref name) => write!(f, "Expected argument {} was not specified", name),
+            ResolveError::InvalidArgumentType(ref name) => write!(f, "Argument {} has invalid type", name),
         }
     }
 }
@@ -321,10 +329,10 @@ impl error::Error for ResolveError {
             ResolveError::InvalidField(_) => "Query has an invalid field",
             ResolveError::NoSubFields => "Resolver expected subfields where no subfields were specified",
             ResolveError::ExpectedArgument(_) => "Expected argument was not specified",
+            ResolveError::InvalidArgumentType(_) => "Argument has invalid type",
         }
     }
 }
-
 
 pub fn resolve<T>(ctx: Context,
                   selection_set: SelectionSet,

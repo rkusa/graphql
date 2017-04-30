@@ -41,6 +41,7 @@ pub enum ErrorKind {
     VariableMissing,
     NonNullable,
     UnexpectedVariable,
+    InvalidArgumentType,
 }
 
 #[derive(Debug)]
@@ -69,6 +70,7 @@ impl ParserError {
             ErrorKind::VariableMissing => format!("variable missing at {}", self.1),
             ErrorKind::NonNullable => format!("variable is not nullable at {}", self.1),
             ErrorKind::UnexpectedVariable => format!("unexpected variable at {}", self.1),
+            ErrorKind::InvalidArgumentType => format!("invalid argument type at {}", self.1),
         }
     }
 }
@@ -169,41 +171,11 @@ impl<'a> Parser<'a> {
             for (k, (t, d)) in v {
                 let val = self.vars
                     .get(&k)
-                    .map(|v| {
-                        match v {
-                            &JsonValue::Number(ref n) => {
-                                // TODO: i64 vs i32 + unwrap?
-                                match t {
-                                    VariableType::Named(ref name, _) => {
-                                        match name.as_str() {
-                                            "Int" if n.is_i64() => {
-                                                Value::Int(n.as_i64().unwrap() as i32)
-                                            }
-                                            "Int" if n.is_u64() => {
-                                                Value::Int(n.as_u64().unwrap() as i32)
-                                            }
-                                            "Float" if n.is_f64() => {
-                                                Value::Float(n.as_f64().unwrap() as f32)
-                                            }
-                                            _ => Value::Null,
-                                        }
-                                    }
-                                    _ => Value::Null,
-                                }
-                            }
-                            // TODO: other types
-                            // TODO: better error handling
-                            _ => Value::Null,
-                        }
-                    })
-                    .or_else(|| d);
+                    .map(|v| value_from_json_named(&t, v))
+                    .or_else(|| d.map(|v| Ok(v)));
 
                 if let Some(val) = val {
-                    if let Value::Null = val {
-                        if !t.is_nullable() {
-                            return Err(ErrorKind::NonNullable);
-                        }
-                    }
+                    let val = val?;
 
                     vars.insert(k, val);
                 }
@@ -512,6 +484,66 @@ impl<'a> Parser<'a> {
                 }
             }
             None => Err(ErrorKind::UnexpectedEnd),
+        }
+    }
+}
+
+fn value_from_json_named(t: &VariableType, v: &JsonValue) -> Result<Value, ErrorKind> {
+    if let &JsonValue::Null = v {
+        if t.is_nullable() {
+            return Ok(Value::Null)
+        } else {
+            return Err(ErrorKind::NonNullable)
+        }
+    }
+
+    match t {
+        &VariableType::Named(ref name, _) => {
+            match name.as_str() {
+                "Int" => {
+                    if let &JsonValue::Number(ref n) = v {
+                        if n.is_i64() {
+                            Ok(Value::Int(n.as_i64().unwrap() as i32))
+                        } else if n.is_u64() {
+                            Ok(Value::Int(n.as_u64().unwrap() as i32))
+                        } else {
+                            Err(ErrorKind::InvalidArgumentType)
+                        }
+                    } else {
+                        Err(ErrorKind::InvalidArgumentType)
+                    }
+                }
+                "Float" => {
+                    if let &JsonValue::Number(ref n) = v {
+                        if n.is_f64() {
+                            Ok(Value::Float(n.as_f64().unwrap() as f32))
+                        } else {
+                            Err(ErrorKind::InvalidArgumentType)
+                        }
+                    } else {
+                        Err(ErrorKind::InvalidArgumentType)
+                    }
+                },
+                "String" => {
+                    if let &JsonValue::String(ref s) = v {
+                        Ok(Value::String(s.clone()))
+                    } else {
+                        Err(ErrorKind::InvalidArgumentType)
+                    }
+                }
+                _ => panic!("variable type {} unimplemented", name),
+            }
+        }
+        &VariableType::List(ref t, _) => {
+            if let &JsonValue::Array(ref vec) = v {
+                let mut result = Vec::with_capacity(vec.len());
+                for v in vec.iter() {
+                    result.push(value_from_json_named(t, v)?)
+                }
+                Ok(Value::List(result))
+            } else {
+                Err(ErrorKind::InvalidArgumentType)
+            }
         }
     }
 }
