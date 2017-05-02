@@ -79,7 +79,11 @@ impl<'a> Resolve<'a> {
     pub fn value<T>(&self, val: T) -> ResolveResult
         where T: Into<Value>
     {
-        Ok(ResolveValue::Now(val.into()))
+        let val = val.into();
+        match val {
+            Value::Invalid(r) => Err(ResolveError::InvalidValue(r)),
+            _ => Ok(ResolveValue::Now(val))
+        }
     }
 
     pub fn resolve<'b, T, R>(&self, val: T) -> ResolveResult
@@ -198,6 +202,19 @@ impl<'a, T> From<Vec<&'static T>> for IntermediateResult<'a, T>
 }
 
 #[derive(Debug)]
+pub enum InvalidReason {
+    InvalidNumber
+}
+
+impl InvalidReason {
+    pub fn as_str(&self) -> &str {
+        match *self {
+            InvalidReason::InvalidNumber => "Infinite or NaN values are not JSON numbers",
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum Value {
     Null,
     // Bool(bool),
@@ -207,6 +224,8 @@ pub enum Value {
 
     // a vector is used to preserve order of insertion (order of fields in the query)
     Object(Vec<(String, Value)>),
+
+    Invalid(InvalidReason)
 }
 
 impl From<i32> for Value {
@@ -234,16 +253,18 @@ impl From<u64> for Value {
 }
 
 impl From<f32> for Value {
-    fn from(i: f32) -> Value {
-        // TODO: no default of 0
-        Value::Number(Number::from_f64(i as f64).unwrap_or_else(|| 0.into()))
+    fn from(f: f32) -> Value {
+        Number::from_f64(f as f64)
+            .map(|n| Value::Number(n))
+            .unwrap_or_else(|| Value::Invalid(InvalidReason::InvalidNumber))
     }
 }
 
 impl From<f64> for Value {
-    fn from(i: f64) -> Value {
-        // TODO: no unwrap
-        Value::Number(Number::from_f64(i).unwrap_or_else(|| 0.into()))
+    fn from(f: f64) -> Value {
+        Number::from_f64(f)
+            .map(|n| Value::Number(n))
+            .unwrap_or_else(|| Value::Invalid(InvalidReason::InvalidNumber))
     }
 }
 
@@ -300,6 +321,8 @@ impl Serialize for Value {
                 }
                 map.end()
             }
+            // TODO: serialize as null a good idea?
+            Value::Invalid(_) => serializer.serialize_none(),
         }
     }
 }
@@ -310,6 +333,7 @@ pub enum ResolveError {
     NoSubFields,
     ExpectedArgument(String),
     InvalidArgumentType(String),
+    InvalidValue(InvalidReason),
 }
 
 impl fmt::Display for ResolveError {
@@ -319,6 +343,7 @@ impl fmt::Display for ResolveError {
             ResolveError::NoSubFields => write!(f, "Field does not have subfields"),
             ResolveError::ExpectedArgument(ref name) => write!(f, "Expected argument {} was not specified", name),
             ResolveError::InvalidArgumentType(ref name) => write!(f, "Argument {} has invalid type", name),
+            ResolveError::InvalidValue(ref reason) => write!(f, "Received invalid value: {}", reason.as_str()),
         }
     }
 }
@@ -330,6 +355,7 @@ impl error::Error for ResolveError {
             ResolveError::NoSubFields => "Resolver expected subfields where no subfields were specified",
             ResolveError::ExpectedArgument(_) => "Expected argument was not specified",
             ResolveError::InvalidArgumentType(_) => "Argument has invalid type",
+            ResolveError::InvalidValue(_) => "Received invalid value",
         }
     }
 }
