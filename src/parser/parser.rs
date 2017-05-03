@@ -42,6 +42,7 @@ pub enum ErrorKind {
     NonNullable,
     UnexpectedVariable,
     InvalidArgumentType,
+    MaliciousQuery,
 }
 
 #[derive(Debug)]
@@ -71,6 +72,7 @@ impl ParserError {
             ErrorKind::NonNullable => format!("variable is not nullable at {}", self.1),
             ErrorKind::UnexpectedVariable => format!("unexpected variable at {}", self.1),
             ErrorKind::InvalidArgumentType => format!("invalid argument type at {}", self.1),
+            ErrorKind::MaliciousQuery => format!("malicious behavior detected at {}", self.1),
         }
     }
 }
@@ -216,7 +218,7 @@ impl<'a> Parser<'a> {
 
                         self.expect(TokenKind::Colon)?;
 
-                        let input_type = self.input_type()?;
+                        let input_type = self.input_type(1)?;
                         let mut default = None;
 
                         // default value
@@ -446,7 +448,13 @@ impl<'a> Parser<'a> {
     }
 
     // TODO: tests for input_type
-    fn input_type(&mut self) -> Result<VariableType, ErrorKind> {
+    fn input_type(&mut self, depth: usize) -> Result<VariableType, ErrorKind> {
+        // this method may call itself recursively
+        // prevent queries that try to provoke a stack overflow
+        if depth > 16 {
+            return Err(ErrorKind::MaliciousQuery)
+        }
+
         match self.next_token() {
             Some(TokenKind::Name(s)) => {
                 if let Some(&TokenKind::Bang) = self.peek_token() {
@@ -457,8 +465,7 @@ impl<'a> Parser<'a> {
                 }
             }
             Some(TokenKind::LeftBracket) => {
-                // TODO: prevent stackoverflow attacks
-                let inner = Box::new(self.input_type()?);
+                let inner = Box::new(self.input_type(depth + 1)?);
 
                 self.expect(TokenKind::RightBracket)?;
 
@@ -469,8 +476,8 @@ impl<'a> Parser<'a> {
                     Ok(VariableType::List(inner, true))
                 }
             }
-            Some(_) | None => Err(ErrorKind::UnexpectedToken),
-            // None => Err(ErrorKind::ExpectedToken),
+            Some(_) => Err(ErrorKind::UnexpectedToken),
+            None => Err(ErrorKind::UnexpectedEnd),
         }
     }
 
