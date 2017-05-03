@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use serde_json::{Value as JsonValue};
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Value {
@@ -112,33 +111,6 @@ impl<T> FromGql for Vec<T>
             Ok(result)
         } else {
             Err(FromGqlError::InvalidType)
-        }
-    }
-}
-
-impl<'a> From<&'a JsonValue> for Value {
-    fn from(v: &'a JsonValue) -> Value {
-        match v {
-            &JsonValue::Null => Value::Null,
-            &JsonValue::Bool(b) => Value::Boolean(b),
-            &JsonValue::Number(ref n) => {
-                if n.is_f64() {
-                    // TODO as f64
-                    // TODO unwrap?
-                    Value::Float(n.as_f64().unwrap() as f32)
-                } else {
-                    Value::Int(n.as_i64().unwrap() as i32)
-                }
-            },
-            &JsonValue::String(ref s) => Value::String(s.clone()),
-            &JsonValue::Array(ref a) => Value::List(a.iter().map(Value::from).collect()),
-            &JsonValue::Object(ref m) => {
-                let mut new = HashMap::new();
-                for (k, v) in m.iter() {
-                    new.insert(k.clone(), Value::from(v));
-                }
-                Value::Object(new)
-            },
         }
     }
 }
